@@ -2,26 +2,36 @@ package vsock
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/brodyxchen/vsock/pb"
 	"github.com/mdlayher/vsock"
+	"google.golang.org/protobuf/proto"
 	"io"
-	"log"
+	"math"
 	"net"
 	"runtime"
 	"time"
 )
 
-type handleFunc func(net.Conn, []byte) ([]byte, error)
+const (
+	ActionError = uint16(0)
+)
+
+var (
+	errExceedBody    = errors.New("exceed body size")
+	errInvalidHeader = errors.New("invalid header")
+	errInvalidBody   = errors.New("invalid body")
+)
+
+type handleFunc func(uint16, []byte) ([]byte, error)
 
 func NewServer(addr Addr) *Server {
 	return &Server{
 		Addr:              addr,
-		handlers:          make(map[string]handleFunc, 0),
+		handlers:          make(map[uint16]*Handler, 0),
 		ReadTimeout:       0,
 		WriteTimeout:      0,
 		IdleTimeout:       time.Hour,
@@ -29,10 +39,14 @@ func NewServer(addr Addr) *Server {
 	}
 }
 
+type Handler struct {
+	Handle handleFunc
+}
+
 type Server struct {
 	Addr Addr
 
-	handlers map[string]handleFunc
+	handlers map[uint16]*Handler
 
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
@@ -55,13 +69,19 @@ func (srv *Server) sleep(tempDelay time.Duration) time.Duration {
 	return tempDelay
 }
 
-func (srv *Server) HandleAction(action string, handleFn handleFunc) {
-	srv.handlers[action] = handleFn
+func (srv *Server) HandleAction(action uint16, handleFn handleFunc) {
+	if action == ActionError {
+		panic("invalid action")
+	}
+
+	srv.handlers[action] = &Handler{
+		Handle: handleFn,
+	}
 }
 
 func (srv *Server) ListenAndServe() error {
 	var (
-		ln net.Listener
+		ln  net.Listener
 		err error
 	)
 
@@ -152,7 +172,7 @@ func (c *Conn) serve(ctx context.Context) {
 			const size = 64 << 10
 			buf := make([]byte, size)
 			buf = buf[:runtime.Stack(buf, false)]
-			log.Printf("http: panic serving %v: %v\n%s", c.remoteAddr, err, buf)
+			fmt.Printf("http: panic serving %v: %v\n%s", c.remoteAddr, err, buf)
 		}
 	}()
 
@@ -169,93 +189,132 @@ func (c *Conn) serve(ctx context.Context) {
 		_ = c.rwc.SetReadDeadline(time.Time{})
 	}
 
-	// server读取数据
-	reqBytes, err := c.readRequest(ctx)
+	// 读取req
+	header, body, err := readSocket(ctx, c.bufReader)
 	if err != nil {
-		c.responseError(ctx, err)
+		c.Close(err)
 		return
 	}
-
-	var req Request
-	err = json.Unmarshal(reqBytes, &req)
-	if err != nil {
-		c.responseError(ctx, err)
-		return
-	}
-	data, err := base64.StdEncoding.DecodeString(req.Data)
-	if err != nil {
-		c.responseError(ctx, err)
-		return
-	}
+	fmt.Printf("readSocket : %+v\n", header)
 
 	// handler
-	handle, ok := c.server.handlers[req.Action]
+	handler, ok := c.server.handlers[header.Action]
 	if !ok {
 		err = errors.New("invalid action")
-		c.responseError(ctx, err)
+		err = c.responseError(ctx, header, err)
+		if err != nil {
+			c.Close(err)
+		}
 		return
 	}
-	outBytes, err := handle(c.rwc, data)
+	// handle
+	rspBytes, err := handler.Handle(header.Action, body)
 	if err != nil {
-		c.responseError(ctx, err)
-		return
-	}
-
-	rsp := &Response{
-		Request: &req,		// 关联req
-		Result:  "ok",
-		Data:    base64.StdEncoding.EncodeToString(outBytes),
-	}
-
-	rspBytes, err := json.Marshal(rsp)
-	if err != nil {
-		c.responseError(ctx, err)
+		err = c.responseError(ctx, header, err)
+		if err != nil {
+			c.Close(err)
+		}
 		return
 	}
 
-	err = c.writeResponse(ctx, rspBytes)
+	// 响应rsp
+	err = writeSocket(ctx, c.bufWriter, header, rspBytes)
 	if err != nil {
+		c.Close(err)
 		return
 	}
 
 	_ = c.rwc.SetReadDeadline(time.Time{})
 }
 
-func (c *Conn) readRequest(ctx context.Context) ([]byte, error) {
-	var dataBuf bytes.Buffer
+func readSocket(ctx context.Context, reader *bufio.Reader) (*Header, []byte, error) {
+	header := &Header{}
 
-	buf := make([]byte, maxReadBytes)
-	for {
-		n, err := c.bufReader.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				return dataBuf.Bytes(), nil
-			}
-			return nil, err
+	headerBuf := make([]byte, HeaderSize)
+	n, err := io.ReadFull(reader, headerBuf)
+	if err != nil {
+		if err == io.EOF {
+			return nil, nil, errInvalidHeader
 		}
-		dataBuf.Write(buf[:n])
+		return nil, nil, errInvalidHeader
 	}
+	if n < HeaderSize {
+		return nil, nil, errInvalidHeader
+	}
+
+	header.Magic = binary.BigEndian.Uint16(headerBuf[:])
+	if header.Magic != defaultMagic {
+		return nil, nil, errInvalidHeader
+	}
+
+	header.Version = binary.BigEndian.Uint16(headerBuf[2:])
+	header.Action = binary.BigEndian.Uint16(headerBuf[4:])
+	header.Length = binary.BigEndian.Uint16(headerBuf[6:])
+
+	if header.Length <= 0 {
+		return header, nil, nil
+	}
+
+	bodyBuf := make([]byte, header.Length)
+	n, err = io.ReadFull(reader, bodyBuf) // 第一次读取27, 循环第二次读取卡住了
+	if err == nil || err == io.EOF {
+		if n < int(header.Length) {
+			return header, nil, errInvalidBody
+		}
+		return header, bodyBuf[:header.Length], nil
+	}
+
+	return header, nil, errInvalidBody
 }
 
-func (c *Conn) writeResponse(ctx context.Context, bytes []byte) error {
-	if c.server.WriteTimeout > 0 {
-		_ = c.rwc.SetWriteDeadline(time.Now().Add(c.server.WriteTimeout))
-	} else {
-		_ = c.rwc.SetWriteDeadline(time.Time{})
+func writeSocket(ctx context.Context, writer *bufio.Writer, header *Header, body []byte) error {
+	//if c.server.WriteTimeout > 0 {
+	//	_ = c.rwc.SetWriteDeadline(time.Now().Add(c.server.WriteTimeout))
+	//} else {
+	//	_ = c.rwc.SetWriteDeadline(time.Time{})
+	//}
+
+	length := len(body)
+	if length > math.MaxUint16 {
+		return errExceedBody
+	}
+	header.Length = uint16(length)
+
+	buf := make([]byte, HeaderSize+length)
+	binary.BigEndian.PutUint16(buf, header.Magic)
+	binary.BigEndian.PutUint16(buf[2:], header.Version)
+	binary.BigEndian.PutUint16(buf[4:], header.Action)
+	binary.BigEndian.PutUint16(buf[6:], header.Length)
+	if length > 0 {
+		copy(buf[HeaderSize:], body)
 	}
 
-	_, err := c.bufWriter.Write(bytes)
+	_, err := writer.Write(buf)
+	if err != nil {
+		return err
+	}
 
-	return err
+	err = writer.Flush()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
+func (c *Conn) responseError(ctx context.Context, header *Header, err error) error {
+	fmt.Println("responseError : ", err.Error())
 
-func (c *Conn) responseError(ctx context.Context, err error) {
-	rsp := &Response{
-		Result:  "error",
-		Data:    err.Error(),
+	rsp := &pb.ErrorBody{
+		Code:    -1,
+		Message: err.Error(),
 	}
 
-	rspBytes, _ := json.Marshal(rsp)
-	err = c.writeResponse(ctx, rspBytes)
+	body, _ := proto.Marshal(rsp)
+
+	return writeSocket(ctx, c.bufWriter, header, body)
+}
+func (c *Conn) Close(err error) {
+	fmt.Println("Close : ", err.Error())
+	_ = c.rwc.Close()
 }

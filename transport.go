@@ -7,13 +7,14 @@ import (
 	"time"
 )
 
-const(
-	maxReadBytes = 4 << 10
+const (
+	maxReadBytes   = 4 << 10
+	defaultMagic   = uint16(0x1617)
+	defaultVersion = uint16(1)
 )
 
-
 type Transport struct {
-	connPool map[connectKey][]*PersistConn
+	connPool    map[connectKey][]*PersistConn
 	idleTimeout time.Duration
 
 	maxIdleCount int
@@ -52,7 +53,7 @@ func (tp *Transport) getConn(addr Addr) (*PersistConn, error) {
 			}
 
 			findPConn = pConn
-			list = list[:len(list)-1]	// 从缓存删除
+			list = list[:len(list)-1] // 从缓存删除
 			if len(list) > 0 {
 				tp.connPool[key] = list
 			} else {
@@ -65,7 +66,7 @@ func (tp *Transport) getConn(addr Addr) (*PersistConn, error) {
 	// 创建
 	var (
 		rwConn net.Conn
-		err error
+		err    error
 	)
 	switch ad := addr.(type) {
 	case *VSockAddr:
@@ -124,8 +125,8 @@ func (tp *Transport) putConn(pConn *PersistConn) {
 		list = make([]*PersistConn, 0)
 	}
 
-	if tp.maxIdleCount > 0 && len(list) >= tp.maxIdleCount{
-		cut := len(list)- tp.maxIdleCount+1
+	if tp.maxIdleCount > 0 && len(list) >= tp.maxIdleCount {
+		cut := len(list) - tp.maxIdleCount + 1
 		list = list[cut:]
 	}
 
@@ -133,10 +134,10 @@ func (tp *Transport) putConn(pConn *PersistConn) {
 	tp.connPool[pConn.connectKey] = list
 }
 
-func (tp *Transport) roundTrip(req *Request) (*Response, error) {
+func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byte, error) {
 	var (
 		conn *PersistConn
-		err error
+		err  error
 	)
 
 	defer func() {
@@ -146,14 +147,24 @@ func (tp *Transport) roundTrip(req *Request) (*Response, error) {
 	}()
 
 	for {
-		conn, err = tp.getConn(req.RemoteAddr)
+		conn, err = tp.getConn(addr)
 		if err != nil {
 			return nil, err
 		}
 
+		req := &Request{
+			Header: Header{
+				Magic:   defaultMagic,
+				Version: defaultVersion,
+				Action:  action,
+				Length:  uint16(len(reqBytes)),
+			},
+			Body: reqBytes,
+		}
+
 		rsp, err := conn.roundTrip(req)
 		if err == nil {
-			return rsp, nil
+			return rsp.Body, nil
 		}
 
 		if !conn.shouldRetryRequest(err) {
@@ -161,8 +172,6 @@ func (tp *Transport) roundTrip(req *Request) (*Response, error) {
 		}
 	}
 }
-
-
 
 func (tp *Transport) removeConn(target *PersistConn) {
 	list, ok := tp.connPool[target.connectKey]
@@ -187,5 +196,3 @@ func (tp *Transport) removeConn(target *PersistConn) {
 		tp.connPool[target.connectKey] = list[:len(list)-1]
 	}
 }
-
-

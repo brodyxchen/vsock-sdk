@@ -12,21 +12,21 @@ type Client struct {
 	Timeout   time.Duration
 }
 
-func (cli *Client) Do(req *Request) (*Response, error) {
-	return cli.send(req, cli.deadline())
+func (cli *Client) Do(ad Addr, action uint16, req []byte) ([]byte, error) {
+	return cli.send(ad, action, req, cli.deadline())
 }
 
-func (cli *Client) send(req *Request, deadline time.Time) (*Response, error) {
+func (cli *Client) send(ad Addr, action uint16, req []byte, deadline time.Time) ([]byte, error) {
 	if cli.transport == nil {
 		cli.transport = &Transport{
 			connPool:        make(map[connectKey][]*PersistConn, 0),
 			idleTimeout:     time.Minute,
 			maxIdleCount:    2,
-			WriteBufferSize: 1024*4,
-			ReadBufferSize:  1024*4,
+			WriteBufferSize: 1024 * 4,
+			ReadBufferSize:  1024 * 4,
 		}
 	}
-	rsp, err := cli.transport.roundTrip(req)
+	rsp, err := cli.transport.roundTrip(ad, action, req)
 
 	return rsp, err
 }

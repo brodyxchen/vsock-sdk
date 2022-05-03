@@ -2,7 +2,7 @@ package vsock
 
 import (
 	"bufio"
-	"encoding/json"
+	"context"
 	"io"
 	"net"
 	"time"
@@ -23,7 +23,7 @@ type PersistConn struct {
 	idleAt    time.Time   // time it last become idle
 	idleTimer *time.Timer // holding an AfterFunc to close it
 
-	sawEOF    bool  // whether we've seen EOF from conn; owned by readLoop
+	sawEOF bool // whether we've seen EOF from conn; owned by readLoop
 	//readLimit int64 // bytes allowed to be read; owned by readLoop
 
 	nwrite int64 // bytes written
@@ -38,12 +38,12 @@ func (pc *PersistConn) roundTrip(req *Request) (*Response, error) {
 
 	// 发送数据
 	writeReply := make(chan error, 1)
-	pc.writeCh <- &WriteRequest{Request: req, Reply: writeReply}
+	pc.writeCh <- &WriteRequest{Req: req, Reply: writeReply}
 
 	// 通知接收数据
 	readReply := make(chan *ReadResponse, 1)
 	pc.reqCh <- &RequestWrapper{
-		Request:    req,
+		Req:        req,
 		Reply:      readReply,
 		callerGone: gone,
 	}
@@ -54,8 +54,8 @@ func (pc *PersistConn) roundTrip(req *Request) (*Response, error) {
 			if err != nil {
 				return nil, err
 			}
-		case rsp := <-readReply:
-			return rsp.Response, rsp.Err
+		case rpy := <-readReply:
+			return rpy.Rsp, rpy.Err
 		}
 	}
 }
@@ -104,54 +104,38 @@ func (pc *PersistConn) writeLoop() {
 
 	for {
 		select {
-		case req := <-pc.writeCh:
-			reqBytes, err := json.Marshal(req.Request)
-			if err != nil {
-				req.Reply <- err
-				continue
-			}
+		case writeReq := <-pc.writeCh:
+			ctx := context.Background()
 
-			_, err = pc.bufWriter.Write(reqBytes)
+			req := writeReq.Req
+			err := writeSocket(ctx, pc.bufWriter, &req.Header, req.Body)
 			if err != nil {
-				req.Reply <- err
+				writeReq.Reply <- err
 				return
 			}
 
-			err = pc.bufWriter.Flush()
-			if err != nil {
-				req.Reply <- err
-				return
-			}
-
-			req.Reply <- nil
+			writeReq.Reply <- nil
 		}
 	}
 }
-
 
 func (pc *PersistConn) readLoop() {
 	defer pc.close()
 
 	for {
+		ctx := context.Background()
 		_, err := pc.bufReader.Peek(1)
 		req := <-pc.reqCh
 
-		buf := make([]byte, 0, maxReadBytes)
-		n, err := pc.bufReader.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				err = io.ErrUnexpectedEOF
-			}
-			return
+		var rsp Response
+		header, body, err := readSocket(ctx, pc.bufReader)
+		if err == nil {
+			rsp.Header = *header
+			rsp.Body = body
 		}
 
-		data := buf[:n]
-
-		var rsp Response
-		err = json.Unmarshal(data, &rsp)
-
 		select {
-		case req.Reply <- &ReadResponse{Response: &rsp, Err: err}:
+		case req.Reply <- &ReadResponse{Rsp: &rsp, Err: err}:
 			// 响应数据
 		case <-req.callerGone:
 			// 没有调用者

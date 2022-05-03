@@ -1,30 +1,43 @@
 package vsock
 
-type Request struct {
-	RemoteAddr Addr `json:"-"`
+const (
+	HeaderSize = 8 // 8个Byte
+)
 
-	Action string `json:"action"`
-	Data   string `json:"data"`
+//Header 一排32位
+type Header struct {
+	Magic   uint16 // 2个byte
+	Version uint16
+
+	Action uint16
+	Length uint16 //64k
+
+	//Address int16
+	//Port int16
+}
+
+type Request struct {
+	Header
+	Body []byte
 }
 
 type Response struct {
-	Request *Request `json:"-"`
-
-	Result string `json:"result"`
-	Data   string `json:"data"`
+	Header
+	Body []byte
 }
 
 type WriteRequest struct {
-	Request *Request
-	Reply   chan error
+	Action uint16
+	Req    *Request
+	Reply  chan error
 }
 type RequestWrapper struct {
-	Request *Request
-	Reply   chan *ReadResponse
+	Req   *Request
+	Reply chan *ReadResponse
 
 	callerGone <-chan struct{} // 没有调用者了
 }
 type ReadResponse struct {
-	Response *Response
-	Err      error
+	Rsp *Response
+	Err error
 }
