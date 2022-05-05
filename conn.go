@@ -219,6 +219,10 @@ func (c *Conn) responseError(ctx context.Context, code uint16, err error) error 
 
 func (c *Conn) Close(err error) {
 	fmt.Println("Close : ", err.Error())
+
 	c.cancelCtx()
 	_ = c.rwc.Close()
+
+	putBufReader(c.bufReader)
+	putBufWriter(c.bufWriter)
 }
