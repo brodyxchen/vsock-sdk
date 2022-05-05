@@ -57,13 +57,6 @@ func (pc *PersistConn) roundTrip(req *Request) (*Response, error) {
 	}
 }
 
-func (pc *PersistConn) maxHeaderResponseSize() int64 {
-	//if v := pc.transport.MaxResponseHeaderBytes; v != 0 {
-	//	return v
-	//}
-	return 10 << 20 // conservative default; same as http2
-}
-
 func (pc *PersistConn) Read(p []byte) (n int, err error) {
 	n, err = pc.conn.Read(p)
 	return

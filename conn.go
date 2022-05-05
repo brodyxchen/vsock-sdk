@@ -18,7 +18,7 @@ import (
 type Conn struct {
 	server *Server
 
-	cancelCtx context.CancelFunc
+	cancelCtx context.CancelFunc //todo 没用到
 
 	rwc net.Conn
 
@@ -26,8 +26,6 @@ type Conn struct {
 
 	bufReader *bufio.Reader
 	bufWriter *bufio.Writer
-
-	isHijacked bool
 }
 
 func (c *Conn) Read(p []byte) (n int, err error) {
@@ -36,10 +34,6 @@ func (c *Conn) Read(p []byte) (n int, err error) {
 
 func (c *Conn) Write(p []byte) (n int, err error) {
 	return c.rwc.Write(p)
-}
-
-func (c *Conn) hijacked() bool {
-	return c.isHijacked
 }
 
 func (c *Conn) handleServe(ctx context.Context, header *Header, body []byte) ([]byte, error) {
@@ -128,8 +122,10 @@ func (c *Conn) serve(ctx context.Context) {
 		if wait := c.server.idleTimeout(); wait != 0 {
 			_ = c.rwc.SetReadDeadline(time.Now().Add(wait))
 			if _, err := c.bufReader.Peek(HeaderSize); err != nil {
+				c.Close(err)
 				return
 			}
+			fmt.Println("Peek new bytes")
 		}
 		_ = c.rwc.SetReadDeadline(time.Time{})
 	}
