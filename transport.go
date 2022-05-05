@@ -11,6 +11,8 @@ const (
 	maxReadBytes   = 4 << 10
 	defaultMagic   = uint16(0x1617)
 	defaultVersion = uint16(1)
+
+	maxRetryCount = 1
 )
 
 type Transport struct {
@@ -29,7 +31,7 @@ type Transport struct {
 	ReadBufferSize int
 }
 
-func (tp *Transport) getConn(addr Addr) (*PersistConn, error) {
+func (tp *Transport) getConn(addr Addr, retryCount int) (*PersistConn, error) {
 	key := connectKey{}
 	key.From(addr)
 
@@ -38,10 +40,12 @@ func (tp *Transport) getConn(addr Addr) (*PersistConn, error) {
 		beginTime = time.Now().Add(-tp.idleTimeout)
 	}
 
-	// 查找缓存
-	findConn := tp.connPool.Get(key, beginTime)
-	if findConn != nil {
-		return findConn, nil
+	if retryCount <= 0 {
+		// 查找缓存
+		findConn := tp.connPool.Get(key, beginTime)
+		if findConn != nil {
+			return findConn, nil
+		}
 	}
 
 	// 创建
@@ -104,8 +108,9 @@ func (tp *Transport) putConn(pConn *PersistConn) {
 
 func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byte, error) {
 	var (
-		conn *PersistConn
-		err  error
+		retryCount = 0
+		conn       *PersistConn
+		err        error
 	)
 
 	defer func() {
@@ -115,8 +120,7 @@ func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byt
 	}()
 
 	for {
-		//todo 第一次 获取旧的， 第二次获取新的？
-		conn, err = tp.getConn(addr)
+		conn, err = tp.getConn(addr, retryCount)
 		if err != nil {
 			return nil, err
 		}
@@ -137,9 +141,11 @@ func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byt
 		}
 
 		// 是否重试
-		if !conn.reused {
+		if !conn.reused || retryCount > maxRetryCount {
 			return nil, err
 		}
+
+		retryCount++
 	}
 }
 
