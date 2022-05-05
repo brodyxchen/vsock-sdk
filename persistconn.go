@@ -3,7 +3,6 @@ package vsock
 import (
 	"bufio"
 	"context"
-	"io"
 	"net"
 	"time"
 )
@@ -23,13 +22,11 @@ type PersistConn struct {
 	idleAt    time.Time   // time it last become idle
 	idleTimer *time.Timer // holding an AfterFunc to close it
 
-	sawEOF bool // whether we've seen EOF from conn; owned by readLoop
-	//readLimit int64 // bytes allowed to be read; owned by readLoop
-
-	nwrite int64 // bytes written
-
+	state  ConnState
 	reused bool
-	closed bool
+
+	closed   bool
+	closedCh chan struct{}
 }
 
 func (pc *PersistConn) roundTrip(req *Request) (*Response, error) {
@@ -67,35 +64,39 @@ func (pc *PersistConn) maxHeaderResponseSize() int64 {
 	return 10 << 20 // conservative default; same as http2
 }
 
-func (pc *PersistConn) isReused() bool {
-	return pc.reused
-}
-
-func (pc *PersistConn) shouldRetryRequest(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	return pc.isReused()
-}
-
 func (pc *PersistConn) Read(p []byte) (n int, err error) {
 	n, err = pc.conn.Read(p)
-	if err == io.EOF {
-		pc.sawEOF = true
-	}
 	return
 }
 
 func (pc *PersistConn) Write(p []byte) (n int, err error) {
 	n, err = pc.conn.Write(p)
-	pc.nwrite += int64(n)
 	return
 }
 
+func (pc *PersistConn) closeIfIdle() {
+	if pc.state != ConnStateIdle {
+		return
+	}
+
+	pc.close()
+}
+
 func (pc *PersistConn) close() {
+	if pc.closed {
+		return
+	}
+
 	pc.closed = true
+	close(pc.closedCh)
+
+	pc.state = ConnStateIdle
+
+	if pc.idleTimer != nil {
+		pc.idleTimer.Stop()
+	}
 	pc.transport.removeConn(pc)
+
 	_ = pc.conn.Close()
 }
 
@@ -104,6 +105,7 @@ func (pc *PersistConn) writeLoop() {
 
 	for {
 		select {
+		case <-pc.closedCh:
 		case writeReq := <-pc.writeCh:
 			ctx := context.Background()
 
@@ -124,8 +126,13 @@ func (pc *PersistConn) readLoop() {
 
 	for {
 		ctx := context.Background()
-		_, err := pc.bufReader.Peek(1)
-		req := <-pc.reqCh
+		//_, err := pc.bufReader.Peek(1)
+		var req *RequestWrapper
+		select {
+		case <-pc.closedCh:
+			return
+		case req = <-pc.reqCh:
+		}
 
 		var rsp Response
 		header, body, err := readSocket(ctx, pc.bufReader)

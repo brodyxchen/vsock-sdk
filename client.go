@@ -1,9 +1,7 @@
 package vsock
 
 import (
-	"bytes"
-	"io"
-	"net"
+	"sync"
 	"time"
 )
 
@@ -19,9 +17,12 @@ func (cli *Client) Do(ad Addr, action uint16, req []byte) ([]byte, error) {
 func (cli *Client) send(ad Addr, action uint16, req []byte, deadline time.Time) ([]byte, error) {
 	if cli.transport == nil {
 		cli.transport = &Transport{
-			connPool:        make(map[connectKey][]*PersistConn, 0),
+			connPool: ConnPool{
+				pool:     make(map[connectKey][]*PersistConn, 0),
+				mutex:    sync.RWMutex{},
+				maxCount: 2,
+			},
 			idleTimeout:     time.Minute,
-			maxIdleCount:    2,
 			WriteBufferSize: 1024 * 4,
 			ReadBufferSize:  1024 * 4,
 		}
@@ -36,19 +37,4 @@ func (cli *Client) deadline() time.Time {
 		return time.Now().Add(cli.Timeout)
 	}
 	return time.Time{}
-}
-
-func (cli *Client) ReadDDD(conn net.Conn) (string, error) {
-	var dataBuf bytes.Buffer
-	buf := make([]byte, 1024*4)
-	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				return dataBuf.String(), nil
-			}
-			return "", err
-		}
-		dataBuf.Write(buf[:n])
-	}
 }

@@ -14,10 +14,9 @@ const (
 )
 
 type Transport struct {
-	connPool    map[connectKey][]*PersistConn
-	idleTimeout time.Duration
+	connPool ConnPool
 
-	maxIdleCount int
+	idleTimeout time.Duration
 
 	// WriteBufferSize specifies the size of the write buffer used
 	// when writing to the transport.
@@ -40,27 +39,9 @@ func (tp *Transport) getConn(addr Addr) (*PersistConn, error) {
 	}
 
 	// 查找缓存
-	var findPConn *PersistConn
-	if list, ok := tp.connPool[key]; ok {
-		// 倒序查找
-		for len(list) > 0 {
-			pConn := list[len(list)-1]
-
-			tooOld := !beginTime.IsZero() && pConn.idleAt.Round(0).Before(beginTime)
-			if tooOld {
-				list = list[:len(list)-1]
-				continue
-			}
-
-			findPConn = pConn
-			list = list[:len(list)-1] // 从缓存删除
-			if len(list) > 0 {
-				tp.connPool[key] = list
-			} else {
-				delete(tp.connPool, key)
-			}
-			return findPConn, nil
-		}
+	findConn := tp.connPool.Get(key, beginTime)
+	if findConn != nil {
+		return findConn, nil
 	}
 
 	// 创建
@@ -87,9 +68,12 @@ func (tp *Transport) getConn(addr Addr) (*PersistConn, error) {
 		conn:       rwConn,
 		reqCh:      make(chan *RequestWrapper, 1),
 		writeCh:    make(chan *WriteRequest, 1),
-		sawEOF:     false,
+		idleAt:     time.Time{},
+		idleTimer:  nil,
+		state:      ConnStateBusy,
 		reused:     false,
 		closed:     false,
+		closedCh:   make(chan struct{}, 1),
 	}
 	pConn.bufReader = bufio.NewReaderSize(pConn, tp.readBufferSize())
 	pConn.bufWriter = bufio.NewWriterSize(pConn, tp.writeBufferSize())
@@ -115,23 +99,7 @@ func (tp *Transport) readBufferSize() int {
 }
 
 func (tp *Transport) putConn(pConn *PersistConn) {
-	pConn.reused = true
-
-	pConn.idleAt = time.Now()
-	pConn.idleTimer = time.AfterFunc(tp.idleTimeout, pConn.close)
-
-	list, ok := tp.connPool[pConn.connectKey]
-	if !ok {
-		list = make([]*PersistConn, 0)
-	}
-
-	if tp.maxIdleCount > 0 && len(list) >= tp.maxIdleCount {
-		cut := len(list) - tp.maxIdleCount + 1
-		list = list[cut:]
-	}
-
-	list = append(list, pConn)
-	tp.connPool[pConn.connectKey] = list
+	tp.connPool.Put(pConn, tp.idleTimeout)
 }
 
 func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byte, error) {
@@ -147,6 +115,7 @@ func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byt
 	}()
 
 	for {
+		//todo 第一次 获取旧的， 第二次获取新的？
 		conn, err = tp.getConn(addr)
 		if err != nil {
 			return nil, err
@@ -167,32 +136,13 @@ func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byt
 			return rsp.Body, nil
 		}
 
-		if !conn.shouldRetryRequest(err) {
+		// 是否重试
+		if !conn.reused {
 			return nil, err
 		}
 	}
 }
 
 func (tp *Transport) removeConn(target *PersistConn) {
-	list, ok := tp.connPool[target.connectKey]
-	if !ok {
-		return
-	}
-
-	if target.idleTimer != nil {
-		target.idleTimer.Stop()
-	}
-
-	if len(list) <= 0 {
-		return
-	}
-
-	for k, conn := range list {
-		if conn != target {
-			continue
-		}
-
-		copy(list[k:], list[k+1:])
-		tp.connPool[target.connectKey] = list[:len(list)-1]
-	}
+	tp.connPool.Remove(target)
 }
