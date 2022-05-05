@@ -9,11 +9,8 @@ type Header struct {
 	Magic   uint16 // 2个byte
 	Version uint16
 
-	Action uint16
+	Code   uint16
 	Length uint16 //64k
-
-	//Address int16
-	//Port int16
 }
 
 type Request struct {

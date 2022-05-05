@@ -3,6 +3,7 @@ package vsock
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"time"
 )
@@ -103,6 +104,7 @@ func (pc *PersistConn) writeLoop() {
 			ctx := context.Background()
 
 			req := writeReq.Req
+
 			err := writeSocket(ctx, pc.bufWriter, &req.Header, req.Body)
 			if err != nil {
 				writeReq.Reply <- err
@@ -127,15 +129,26 @@ func (pc *PersistConn) readLoop() {
 		case req = <-pc.reqCh:
 		}
 
-		var rsp Response
+		var rsp *Response
 		header, body, err := readSocket(ctx, pc.bufReader)
 		if err == nil {
-			rsp.Header = *header
-			rsp.Body = body
+			if header.Code == 0 {
+				rsp = &Response{
+					Header: *header,
+					Body:   body,
+				}
+				err = nil
+			} else {
+				if header.Length == 0 {
+					err = ErrUnknownServerErr
+				} else {
+					err = errors.New(string(body))
+				}
+			}
 		}
 
 		select {
-		case req.Reply <- &ReadResponse{Rsp: &rsp, Err: err}:
+		case req.Reply <- &ReadResponse{Rsp: rsp, Err: err}:
 			// 响应数据
 		case <-req.callerGone:
 			// 没有调用者

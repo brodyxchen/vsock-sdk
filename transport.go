@@ -125,7 +125,7 @@ func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byt
 			Header: Header{
 				Magic:   defaultMagic,
 				Version: defaultVersion,
-				Action:  action,
+				Code:    action,
 				Length:  uint16(len(reqBytes)),
 			},
 			Body: reqBytes,

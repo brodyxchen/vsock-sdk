@@ -1,8 +1,13 @@
 package vsock
 
 import (
+	"errors"
 	"sync"
 	"time"
+)
+
+var (
+	ErrUnknownServerErr = errors.New("unknown server error")
 )
 
 type Client struct {

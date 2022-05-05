@@ -4,10 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
-	"github.com/brodyxchen/vsock/pb"
-	"google.golang.org/protobuf/proto"
 	"io"
 	"math"
 	"net"
@@ -36,18 +33,15 @@ func (c *Conn) Write(p []byte) (n int, err error) {
 	return c.rwc.Write(p)
 }
 
-func (c *Conn) handleServe(ctx context.Context, header *Header, body []byte) ([]byte, error) {
-	handler, ok := c.server.handlers[header.Action]
+func (c *Conn) handleServe(ctx context.Context, header *Header, body []byte) ([]byte, bool) {
+	handler, ok := c.server.handlers[header.Code]
 	if !ok {
-		return nil, errors.New("invalid action")
+		return nil, false
 	}
 
-	rspBytes, err := handler.Handle(header.Action, body)
-	if err != nil {
-		return nil, err
-	}
+	rspBytes := handler.Handle(header.Code, body)
 
-	return rspBytes, nil
+	return rspBytes, true
 }
 
 // Serve a new connection.
@@ -98,9 +92,9 @@ func (c *Conn) serve(ctx context.Context) {
 		}
 
 		// handle
-		rspBytes, err := c.handleServe(ctx, header, body)
-		if err != nil {
-			err = c.responseError(ctx, header, err)
+		rspBytes, ok := c.handleServe(ctx, header, body)
+		if !ok {
+			err = c.responseError(ctx, CodeInvalidAction, err)
 			if err != nil {
 				c.Close(err)
 				return
@@ -108,6 +102,8 @@ func (c *Conn) serve(ctx context.Context) {
 		}
 
 		// 响应rsp
+		header.Code = 0
+		header.Length = uint16(len(rspBytes))
 		err = writeSocket(ctx, c.bufWriter, header, rspBytes)
 		if err != nil {
 			c.Close(err)
@@ -152,7 +148,7 @@ func readSocket(ctx context.Context, reader *bufio.Reader) (*Header, []byte, err
 	}
 
 	header.Version = binary.BigEndian.Uint16(headerBuf[2:])
-	header.Action = binary.BigEndian.Uint16(headerBuf[4:])
+	header.Code = binary.BigEndian.Uint16(headerBuf[4:])
 	header.Length = binary.BigEndian.Uint16(headerBuf[6:])
 
 	if header.Length <= 0 {
@@ -187,7 +183,7 @@ func writeSocket(ctx context.Context, writer *bufio.Writer, header *Header, body
 	buf := make([]byte, HeaderSize+length)
 	binary.BigEndian.PutUint16(buf, header.Magic)
 	binary.BigEndian.PutUint16(buf[2:], header.Version)
-	binary.BigEndian.PutUint16(buf[4:], header.Action)
+	binary.BigEndian.PutUint16(buf[4:], header.Code)
 	binary.BigEndian.PutUint16(buf[6:], header.Length)
 	if length > 0 {
 		copy(buf[HeaderSize:], body)
@@ -206,18 +202,21 @@ func writeSocket(ctx context.Context, writer *bufio.Writer, header *Header, body
 	return nil
 }
 
-func (c *Conn) responseError(ctx context.Context, header *Header, err error) error {
+func (c *Conn) responseError(ctx context.Context, code uint16, err error) error {
 	fmt.Println("responseError : ", err.Error())
 
-	rsp := &pb.ErrorBody{
-		Code:    -1,
-		Message: err.Error(),
+	header := &Header{
+		Magic:   defaultMagic,
+		Version: defaultVersion,
+		Code:    code,
+		Length:  0,
 	}
-
-	body, _ := proto.Marshal(rsp)
+	body := []byte(err.Error())
+	header.Length = uint16(len(body))
 
 	return writeSocket(ctx, c.bufWriter, header, body)
 }
+
 func (c *Conn) Close(err error) {
 	fmt.Println("Close : ", err.Error())
 	c.cancelCtx()

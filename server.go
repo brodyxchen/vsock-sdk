@@ -20,7 +20,7 @@ var (
 	errInvalidBody   = errors.New("invalid body")
 )
 
-type handleFunc func(uint16, []byte) ([]byte, error)
+type handleFunc func(uint16, []byte) []byte
 
 func NewServer(addr Addr) *Server {
 	return &Server{

@@ -1,9 +1,0 @@
-syntax = "proto3";
-package vsock;
-
-option go_package = "github.com/brodyxchen/vsock/pb";
-
-message ErrorBody {
-  int32 code = 1;
-  string message = 2;
-}
