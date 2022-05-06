@@ -1,11 +1,14 @@
-package vsock
+package client
 
-import "context"
+import (
+	"context"
+	"github.com/brodyxchen/vsock/models"
+)
 
 type Request struct {
 	ctx context.Context
 
-	Addr Addr
+	Addr models.Addr
 
 	Action uint16
 	Body   []byte
@@ -16,4 +19,13 @@ func (r *Request) Context() context.Context {
 		return r.ctx
 	}
 	return context.Background()
+}
+
+type Response struct {
+	Req *Request
+
+	ConnName int64
+
+	Code uint16
+	Body []byte
 }

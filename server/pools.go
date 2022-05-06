@@ -1,4 +1,4 @@
-package vsock
+package server
 
 import (
 	"bufio"
@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	bufReaderPool   sync.Pool
+	bufReaderPool sync.Pool
 	bufWriterPool sync.Pool
 )
 
@@ -26,7 +26,6 @@ func putBufReader(br *bufio.Reader) {
 	br.Reset(nil)
 	bufReaderPool.Put(br)
 }
-
 
 func getBufWriter(w io.Writer) *bufio.Writer {
 	if v := bufWriterPool.Get(); v != nil {
