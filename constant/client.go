@@ -6,7 +6,7 @@ const (
 	MaxReadBufferSize  = 4 << 10
 	MaxWriteBufferSize = 4 << 10
 
-	MaxConnPoolCountPerKey = 10
+	MaxConnPoolCountPerKey = 2048
 
 	MaxConnPoolIdleTimeout = time.Minute
 

@@ -3,6 +3,7 @@ package client
 import (
 	"bufio"
 	"github.com/brodyxchen/vsock/errors"
+	"github.com/brodyxchen/vsock/log"
 	"github.com/brodyxchen/vsock/models"
 	"github.com/brodyxchen/vsock/socket"
 	"net"
@@ -91,7 +92,7 @@ func (pc *PersistConn) Write(p []byte) (n int, err error) {
 }
 
 func (pc *PersistConn) closeAndRemove() {
-	//log.Infof("persisConn[%v].idle close()", pc.Name)
+	log.Infof("persisConn[%v].idle closeAndRemove()\n", pc.Name)
 	pc.close()
 	pc.transport.removeConn(pc)
 }
@@ -100,6 +101,7 @@ func (pc *PersistConn) close() {
 	if pc.closed {
 		return
 	}
+	log.Infof("persisConn[%v].idle close(%v)\n", pc.Name, pc.closed)
 	pc.closed = true
 
 	close(pc.closedCh)

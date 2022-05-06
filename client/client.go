@@ -71,6 +71,9 @@ func (cli *Client) SendTest(addr models.Addr, action uint16, body []byte, deadli
 	}
 
 	rsp, err := cli.transport.roundTrip(req)
+	if err != nil {
+		return -1, nil, err
+	}
 
 	return rsp.ConnName, rsp.Body, err
 }

@@ -14,11 +14,10 @@ import (
 )
 
 type Conn struct {
-	server *Server
-	rwc    net.Conn
-
+	server     *Server
 	remoteAddr string
 
+	rwc       net.Conn
 	bufReader *bufio.Reader
 	bufWriter *bufio.Writer
 }
@@ -32,13 +31,12 @@ func (c *Conn) Write(p []byte) (n int, err error) {
 }
 
 func (c *Conn) handleServe(ctx context.Context, header *models.Header, body []byte) ([]byte, bool) {
-	handler, ok := c.server.handlers[header.Code]
-	if !ok {
+	handler := c.server.getHandler(header.Code)
+	if handler == nil {
 		return nil, false
 	}
 
 	rspBytes := handler(header.Code, body)
-
 	return rspBytes, true
 }
 

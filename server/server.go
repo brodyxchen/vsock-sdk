@@ -6,6 +6,7 @@ import (
 	"github.com/brodyxchen/vsock/models"
 	"github.com/mdlayher/vsock"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -20,17 +21,18 @@ type Server struct {
 	Addr models.Addr
 
 	handlers map[uint16]handleFunc
+	mutex    sync.RWMutex
 
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
-
-	IdleTimeout time.Duration
+	IdleTimeout  time.Duration
 
 	DisableKeepAlives int32 // accessed atomically.
 }
 
 func (srv *Server) Init() {
 	srv.handlers = make(map[uint16]handleFunc, 0)
+	srv.mutex = sync.RWMutex{}
 }
 
 func (srv *Server) HandleAction(action uint16, handleFn handleFunc) {
@@ -38,7 +40,19 @@ func (srv *Server) HandleAction(action uint16, handleFn handleFunc) {
 		panic("invalid action")
 	}
 
+	srv.mutex.Lock()
+	defer srv.mutex.Unlock()
 	srv.handlers[action] = handleFn
+}
+
+func (srv *Server) getHandler(action uint16) handleFunc {
+	srv.mutex.RLock()
+	defer srv.mutex.RUnlock()
+	handler, ok := srv.handlers[action]
+	if !ok {
+		return nil
+	}
+	return handler
 }
 
 func (srv *Server) ListenAndServe() error {
