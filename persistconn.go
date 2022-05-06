@@ -12,6 +12,7 @@ type PersistConn struct {
 	transport  *Transport
 	connectKey connectKey
 
+	Name      int64
 	conn      net.Conn
 	bufReader *bufio.Reader // from conn
 	bufWriter *bufio.Writer // to conn
@@ -30,7 +31,7 @@ type PersistConn struct {
 	closedCh chan struct{}
 }
 
-func (pc *PersistConn) roundTrip(req *Request) (*Response, error) {
+func (pc *PersistConn) roundTrip(req *sockRequest) (*sockResponse, error) {
 	gone := make(chan struct{})
 	defer close(gone)
 
@@ -105,7 +106,7 @@ func (pc *PersistConn) writeLoop() {
 
 			req := writeReq.Req
 
-			err := writeSocket(ctx, pc.bufWriter, &req.Header, req.Body)
+			err := writeSocket(ctx, pc.bufWriter, &req.sockHeader, req.Body)
 			if err != nil {
 				writeReq.Reply <- err
 				return
@@ -119,23 +120,20 @@ func (pc *PersistConn) writeLoop() {
 func (pc *PersistConn) readLoop() {
 	defer pc.close()
 
-	for {
+	for !pc.closed {
 		ctx := context.Background()
-		//_, err := pc.bufReader.Peek(1)
-		var req *RequestWrapper
-		select {
-		case <-pc.closedCh:
-			return
-		case req = <-pc.reqCh:
-		}
+		_, err := pc.bufReader.Peek(1) // 阻塞
 
-		var rsp *Response
+		var req *RequestWrapper
+		req = <-pc.reqCh
+
+		var rsp *sockResponse
 		header, body, err := readSocket(ctx, pc.bufReader)
 		if err == nil {
 			if header.Code == 0 {
-				rsp = &Response{
-					Header: *header,
-					Body:   body,
+				rsp = &sockResponse{
+					sockHeader: *header,
+					Body:       body,
 				}
 				err = nil
 			} else {
@@ -150,8 +148,12 @@ func (pc *PersistConn) readLoop() {
 		select {
 		case req.Reply <- &ReadResponse{Rsp: rsp, Err: err}:
 			// 响应数据
+		//case <-req.Req.ctx.Done():
+		//	return
 		case <-req.callerGone:
-			// 没有调用者
+			// 没有调用者了
+			return
 		}
+
 	}
 }

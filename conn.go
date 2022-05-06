@@ -33,7 +33,7 @@ func (c *Conn) Write(p []byte) (n int, err error) {
 	return c.rwc.Write(p)
 }
 
-func (c *Conn) handleServe(ctx context.Context, header *Header, body []byte) ([]byte, bool) {
+func (c *Conn) handleServe(ctx context.Context, header *sockHeader, body []byte) ([]byte, bool) {
 	handler, ok := c.server.handlers[header.Code]
 	if !ok {
 		return nil, false
@@ -94,7 +94,7 @@ func (c *Conn) serve(ctx context.Context) {
 		// handle
 		rspBytes, ok := c.handleServe(ctx, header, body)
 		if !ok {
-			err = c.responseError(ctx, CodeInvalidAction, err)
+			err = c.responseError(ctx, CodeInvalidAction, "invalid action")
 			if err != nil {
 				c.Close(err)
 				return
@@ -127,23 +127,27 @@ func (c *Conn) serve(ctx context.Context) {
 	}
 }
 
-func readSocket(ctx context.Context, reader *bufio.Reader) (*Header, []byte, error) {
-	header := &Header{}
+func readSocket(ctx context.Context, reader *bufio.Reader) (*sockHeader, []byte, error) {
+	header := &sockHeader{}
 
 	headerBuf := make([]byte, HeaderSize)
 	n, err := io.ReadFull(reader, headerBuf)
 	if err != nil {
 		if err == io.EOF {
+			fmt.Printf("readSocket() err == io.EOF, n=%v\n", n)
 			return nil, nil, errInvalidHeader
 		}
+		fmt.Printf("readSocket() err != nil: %v\n", err)
 		return nil, nil, errInvalidHeader
 	}
 	if n < HeaderSize {
+		fmt.Printf("readSocket() n(%v) < HeaderSize\n", n)
 		return nil, nil, errInvalidHeader
 	}
 
 	header.Magic = binary.BigEndian.Uint16(headerBuf[:])
 	if header.Magic != defaultMagic {
+		fmt.Printf("readSocket() header.Magic(%v) != defaultMagic\n", header.Magic)
 		return nil, nil, errInvalidHeader
 	}
 
@@ -167,7 +171,7 @@ func readSocket(ctx context.Context, reader *bufio.Reader) (*Header, []byte, err
 	return header, nil, errInvalidBody
 }
 
-func writeSocket(ctx context.Context, writer *bufio.Writer, header *Header, body []byte) error {
+func writeSocket(ctx context.Context, writer *bufio.Writer, header *sockHeader, body []byte) error {
 	//if c.server.WriteTimeout > 0 {
 	//	_ = c.rwc.SetWriteDeadline(time.Now().Add(c.server.WriteTimeout))
 	//} else {
@@ -202,16 +206,16 @@ func writeSocket(ctx context.Context, writer *bufio.Writer, header *Header, body
 	return nil
 }
 
-func (c *Conn) responseError(ctx context.Context, code uint16, err error) error {
-	fmt.Println("responseError : ", err.Error())
+func (c *Conn) responseError(ctx context.Context, code uint16, msg string) error {
+	fmt.Println("responseError : ", msg)
 
-	header := &Header{
+	header := &sockHeader{
 		Magic:   defaultMagic,
 		Version: defaultVersion,
 		Code:    code,
 		Length:  0,
 	}
-	body := []byte(err.Error())
+	body := []byte(msg)
 	header.Length = uint16(len(body))
 
 	return writeSocket(ctx, c.bufWriter, header, body)

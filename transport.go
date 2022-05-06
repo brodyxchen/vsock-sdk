@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"github.com/mdlayher/vsock"
 	"net"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,6 +30,14 @@ type Transport struct {
 	// when reading from the transport.
 	// If zero, a default (currently 4KB) is used.
 	ReadBufferSize int
+
+	// 递增的，记录conn.name
+	connIndex int64
+}
+
+func (tp *Transport) getConnIndex() int64 {
+	value := atomic.AddInt64(&tp.connIndex, 1)
+	return value
 }
 
 func (tp *Transport) getConn(addr Addr, retryCount int) (*PersistConn, error) {
@@ -67,6 +76,7 @@ func (tp *Transport) getConn(addr Addr, retryCount int) (*PersistConn, error) {
 	}
 
 	pConn := &PersistConn{
+		Name:       tp.getConnIndex(),
 		transport:  tp,
 		connectKey: key,
 		conn:       rwConn,
@@ -106,7 +116,58 @@ func (tp *Transport) putConn(pConn *PersistConn) {
 	tp.connPool.Put(pConn, tp.idleTimeout)
 }
 
-func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byte, error) {
+func (tp *Transport) roundTrip(req *Request) ([]byte, error) {
+	var (
+		ctx        = req.Context()
+		retryCount = 0
+		conn       *PersistConn
+		err        error
+	)
+
+	defer func() {
+		if conn != nil && !conn.closed {
+			tp.putConn(conn)
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		conn, err = tp.getConn(req.Addr, retryCount)
+		if err != nil {
+			return nil, err
+		}
+
+		sReq := &sockRequest{
+			ctx: ctx,
+			sockHeader: sockHeader{
+				Magic:   defaultMagic,
+				Version: defaultVersion,
+				Code:    req.Action,
+				Length:  uint16(len(req.Body)),
+			},
+			Body: req.Body,
+		}
+
+		rsp, err := conn.roundTrip(sReq)
+		if err == nil {
+			return rsp.Body, nil
+		}
+
+		// 是否重试
+		if !conn.reused || retryCount > maxRetryCount {
+			return nil, err
+		}
+
+		retryCount++
+	}
+}
+
+func (tp *Transport) roundTripTest(addr Addr, action uint16, reqBytes []byte) (int64, []byte, error) {
 	var (
 		retryCount = 0
 		conn       *PersistConn
@@ -122,11 +183,11 @@ func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byt
 	for {
 		conn, err = tp.getConn(addr, retryCount)
 		if err != nil {
-			return nil, err
+			return -1, nil, err
 		}
 
-		req := &Request{
-			Header: Header{
+		req := &sockRequest{
+			sockHeader: sockHeader{
 				Magic:   defaultMagic,
 				Version: defaultVersion,
 				Code:    action,
@@ -137,12 +198,12 @@ func (tp *Transport) roundTrip(addr Addr, action uint16, reqBytes []byte) ([]byt
 
 		rsp, err := conn.roundTrip(req)
 		if err == nil {
-			return rsp.Body, nil
+			return conn.Name, rsp.Body, nil
 		}
 
 		// 是否重试
 		if !conn.reused || retryCount > maxRetryCount {
-			return nil, err
+			return conn.Name, nil, err
 		}
 
 		retryCount++
