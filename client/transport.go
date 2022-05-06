@@ -22,17 +22,10 @@ type Transport struct {
 	sendTimeout    time.Duration
 	receiveTimeout time.Duration
 
-	// WriteBufferSize specifies the size of the write buffer used
-	// when writing to the transport.
-	// If zero, a default (currently 4KB) is used.
 	WriteBufferSize int
+	ReadBufferSize  int
 
-	// ReadBufferSize specifies the size of the read buffer used
-	// when reading from the transport.
-	// If zero, a default (currently 4KB) is used.
-	ReadBufferSize int
-
-	connIndex int64
+	connIndex int64 // atomic visit
 }
 
 func (tp *Transport) getConnIndex() int64 {
@@ -99,14 +92,14 @@ func (tp *Transport) writeBufferSize() int {
 	if tp.WriteBufferSize > 0 {
 		return tp.WriteBufferSize
 	}
-	return 4 << 10
+	return constant.MaxWriteBufferSize
 }
 
 func (tp *Transport) readBufferSize() int {
 	if tp.ReadBufferSize > 0 {
 		return tp.ReadBufferSize
 	}
-	return 4 << 10
+	return constant.MaxReadBufferSize
 }
 
 func (tp *Transport) putConn(pConn *PersistConn) {
