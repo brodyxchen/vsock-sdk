@@ -7,6 +7,7 @@ import (
 	"github.com/brodyxchen/vsock/models"
 	"github.com/mdlayher/vsock"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -66,17 +67,18 @@ func (tp *Transport) getConn(addr models.Addr, retryCount int) (*PersistConn, er
 	}
 
 	pConn := &PersistConn{
-		Name:      tp.getConnIndex(),
-		key:       key,
-		transport: tp,
-		conn:      rwConn,
-		receiveCh: make(chan *models.NotifyReceive, 1),
-		sendCh:    make(chan *models.SendRequest, 1),
-		idleAt:    time.Time{},
-		idleTimer: nil,
-		reused:    false,
-		closed:    false,
-		closedCh:  make(chan struct{}, 1),
+		Name:        tp.getConnIndex(),
+		key:         key,
+		transport:   tp,
+		conn:        rwConn,
+		receiveCh:   make(chan *models.NotifyReceive, 1),
+		sendCh:      make(chan *models.SendRequest, 1),
+		idleAt:      time.Time{},
+		idleTimer:   nil,
+		reused:      false,
+		closedMutex: sync.RWMutex{},
+		closed:      false,
+		closedCh:    make(chan struct{}, 1),
 	}
 	pConn.bufReader = bufio.NewReaderSize(pConn, tp.readBufferSize())
 	pConn.bufWriter = bufio.NewWriterSize(pConn, tp.writeBufferSize())
@@ -123,7 +125,7 @@ func (tp *Transport) roundTrip(req *Request) (*Response, error) {
 	}
 
 	defer func() {
-		if err == nil && conn != nil && !conn.closed {
+		if err == nil && conn != nil && !conn.isClosed() {
 			tp.putConn(conn)
 			return
 		}
@@ -178,6 +180,6 @@ func (tp *Transport) roundTrip(req *Request) (*Response, error) {
 	}
 }
 
-func (tp *Transport) removeConn(target *PersistConn) {
-	tp.connPool.Remove(target)
+func (tp *Transport) removeConn(target *PersistConn) bool {
+	return tp.connPool.Remove(target)
 }

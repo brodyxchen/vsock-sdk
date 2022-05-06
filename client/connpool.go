@@ -32,7 +32,7 @@ func (cp *ConnPool) Get(key connectKey) *PersistConn {
 	for len(list) > 0 {
 		pConn := list[len(list)-1]
 
-		if pConn.closed {
+		if pConn.isClosed() {
 			list = list[:len(list)-1]
 			pConn.close()
 			continue
@@ -98,17 +98,17 @@ func (cp *ConnPool) Put(conn *PersistConn) {
 	cp.pool[key] = list
 }
 
-func (cp *ConnPool) Remove(pConn *PersistConn) {
+func (cp *ConnPool) Remove(pConn *PersistConn) bool {
 	cp.mutex.Lock()
 	defer cp.mutex.Unlock()
 
 	list, ok := cp.pool[pConn.key]
 	if !ok {
-		return
+		return false
 	}
 
 	if len(list) <= 0 {
-		return
+		return false
 	}
 
 	for k, conn := range list {
@@ -118,7 +118,9 @@ func (cp *ConnPool) Remove(pConn *PersistConn) {
 
 		copy(list[k:], list[k+1:])
 		cp.pool[conn.key] = list[:len(list)-1]
+		return true
 	}
+	return false
 }
 
 func (cp *ConnPool) Exist(pConn *PersistConn) bool {

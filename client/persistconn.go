@@ -7,6 +7,7 @@ import (
 	"github.com/brodyxchen/vsock/models"
 	"github.com/brodyxchen/vsock/socket"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -23,14 +24,14 @@ type PersistConn struct {
 	receiveCh chan *models.NotifyReceive
 	sendCh    chan *models.SendRequest
 
-	// Both guarded by Transport.idleMu:
+	// 以下三个变量被connPool.mutex守护
 	idleAt    time.Time   // time it last become idle
 	idleTimer *time.Timer // holding an AfterFunc to close it
+	reused    bool
 
-	reused bool
-
-	closed   bool
-	closedCh chan struct{}
+	closedMutex sync.RWMutex // 守护以下2个变量
+	closed      bool
+	closedCh    chan struct{}
 }
 
 // roundTrip 一次往返，不处理关闭和链接池， 由上层transport处理
@@ -93,24 +94,11 @@ func (pc *PersistConn) Write(p []byte) (n int, err error) {
 
 func (pc *PersistConn) closeAndRemove() {
 	log.Infof("persisConn[%v].idle closeAndRemove()\n", pc.Name)
-	pc.close()
-	pc.transport.removeConn(pc)
-}
-
-func (pc *PersistConn) close() {
-	if pc.closed {
+	if !pc.transport.removeConn(pc) {
 		return
 	}
-	log.Infof("persisConn[%v].idle close(%v)\n", pc.Name, pc.closed)
-	pc.closed = true
 
-	close(pc.closedCh)
-
-	if pc.idleTimer != nil {
-		pc.idleTimer.Stop()
-	}
-
-	_ = pc.conn.Close()
+	pc.close()
 }
 
 func (pc *PersistConn) writeLoop() {
@@ -168,4 +156,31 @@ func (pc *PersistConn) readLoop() {
 			return
 		}
 	}
+}
+
+func (pc *PersistConn) isClosed() bool {
+	pc.closedMutex.RLock()
+	defer pc.closedMutex.RUnlock()
+	return pc.closed
+}
+func (pc *PersistConn) close() {
+	pc.closedMutex.Lock()
+	defer pc.closedMutex.Unlock()
+	pc.closeLocked()
+}
+
+func (pc *PersistConn) closeLocked() {
+	if pc.closed {
+		return
+	}
+	log.Infof("persisConn[%v].idle close(%v)\n", pc.Name, pc.closed)
+	pc.closed = true
+
+	close(pc.closedCh)
+
+	if pc.idleTimer != nil {
+		pc.idleTimer.Stop()
+	}
+
+	_ = pc.conn.Close()
 }
