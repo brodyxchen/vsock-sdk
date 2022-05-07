@@ -38,13 +38,13 @@ func (c *Conn) handleServe(ctx context.Context, body []byte) ([]byte, error) {
 		var rsp *protocols.Response
 		if err != nil {
 			rsp = &protocols.Response{
-				Code: 1,
+				Code: protocols.StatusErr,
 				Rsp:  nil,
 				Err:  err.Error(),
 			}
 		} else {
 			rsp = &protocols.Response{
-				Code: 0,
+				Code: protocols.StatusOK,
 				Rsp:  bytes,
 				Err:  "",
 			}

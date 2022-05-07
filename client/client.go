@@ -57,6 +57,9 @@ func (cli *Client) send(addr models.Addr, path string, body []byte, deadline tim
 	}
 
 	rsp, err := cli.transport.roundTrip(req)
+	if err != nil {
+		return nil, err
+	}
 
 	return rsp.Body, err
 }

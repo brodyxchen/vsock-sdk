@@ -160,7 +160,7 @@ func (pc *PersistConn) readLoop() {
 		}
 
 		// 业务错误
-		if pbBody.Code != 0 {
+		if pbBody.Code != protocols.StatusOK {
 			rsp.Code = uint16(pbBody.Code)
 			rsp.Body = nil
 			rsp.Err = errors.New(pbBody.Err)
