@@ -6,6 +6,7 @@ import (
 	"github.com/brodyxchen/vsock/models"
 	"github.com/mdlayher/vsock"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,13 @@ type Server struct {
 	IdleTimeout  time.Duration
 
 	DisableKeepAlives int32 // accessed atomically.
+
+	connIndex int64 // atomic visit
+}
+
+func (srv *Server) getConnIndex() int64 {
+	value := atomic.AddInt64(&srv.connIndex, 1)
+	return value
 }
 
 func (srv *Server) Init() {
@@ -104,7 +112,9 @@ func (srv *Server) Serve(l net.Listener) error {
 
 // Create new connection from rwc.
 func (srv *Server) newConn(rwc net.Conn) *Conn {
+	index := srv.getConnIndex()
 	c := &Conn{
+		Name:   "srv-" + strconv.FormatInt(index, 10),
 		server: srv,
 		rwc:    rwc,
 	}

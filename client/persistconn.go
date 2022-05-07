@@ -7,6 +7,7 @@ import (
 	"github.com/brodyxchen/vsock/models"
 	"github.com/brodyxchen/vsock/socket"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -30,7 +31,7 @@ type PersistConn struct {
 	reused    bool
 
 	closedMutex sync.RWMutex // 守护以下2个变量
-	closed      bool
+	closed      error
 	closedCh    chan struct{}
 }
 
@@ -77,7 +78,7 @@ func (pc *PersistConn) roundTrip(req *models.Request) (*models.Response, error) 
 		case <-receiveTimer: // 接收超时
 			return nil, errors.ErrReadTimeout
 		case <-ctxDone: // ctx结束
-			return nil, errors.ErrCtxDone
+			return nil, errors.ErrCtxRoundDone
 		}
 	}
 }
@@ -93,17 +94,15 @@ func (pc *PersistConn) Write(p []byte) (n int, err error) {
 }
 
 func (pc *PersistConn) closeAndRemove() {
-	log.Infof("persisConn[%v].idle closeAndRemove()\n", pc.Name)
+	//log.Infof("persisConn[%v].idle closeAndRemove()\n", pc.Name)
 	if !pc.transport.removeConn(pc) {
 		return
 	}
 
-	pc.close()
+	pc.close(errors.New("pc.closeAndRemove() => idle timer close"))
 }
 
 func (pc *PersistConn) writeLoop() {
-	defer pc.close()
-
 	for {
 		select {
 		case <-pc.closedCh:
@@ -113,6 +112,7 @@ func (pc *PersistConn) writeLoop() {
 			err := socket.WriteSocket(req.Ctx, pc.bufWriter, &req.Header, req.Body) //todo 卡死？
 			if err != nil {
 				writeReq.Reply <- err
+				pc.close(err)
 				return
 			}
 
@@ -122,16 +122,36 @@ func (pc *PersistConn) writeLoop() {
 }
 
 func (pc *PersistConn) readLoop() {
-	defer pc.close()
+	closeErr := errors.New("pc.readLoop() => default exiting")
+	defer func() {
+		pc.close(closeErr)
+	}()
+
+	var err error
 
 	var notifyReq *models.NotifyReceive
-	for !pc.closed {
-		_, err := pc.bufReader.Peek(1) // 阻塞		//todo 卡死？
+	for !pc.isClosed() {
+		_, err = pc.bufReader.Peek(1) // 阻塞		//todo 卡死？
+		if err != nil {
+			//errMsg := err.Error()
+			//todo client 这里isClosed标志没有关闭， 但是conn关闭了
+			// 可能1. 其他go关闭， 2. 对手关闭,  3. 中间网络关闭
+
+			//isClose := pc.isClosed()
+			//if !isClose {
+			//	fmt.Printf("persisConn[%v].readLoop[%v] Peek err: %v\n", pc.Name, pc.isClosed(), errMsg)	//todo true read tcp 127.0.0.1:52492->127.0.0.1:7070: use of closed network connection
+			//}
+
+			//fmt.Println(pc.isClosed(), errMsg)
+			closeErr = errors.New("readLoop() peek err => " + err.Error())
+			return
+		}
 
 		notifyReq = <-pc.receiveCh
 
 		var rsp *models.Response
-		header, body, err := socket.ReadSocket(notifyReq.Req.Ctx, pc.bufReader) //todo 卡死？
+		keyName := pc.transport.Name + "--" + strconv.FormatInt(pc.Name, 10)
+		header, body, err := socket.ReadSocket(keyName, notifyReq.Req.Ctx, pc.bufReader) //todo 卡死？
 		if err == nil {
 			if header.Code == 0 {
 				rsp = &models.Response{
@@ -153,6 +173,7 @@ func (pc *PersistConn) readLoop() {
 		select {
 		case notifyReq.Reply <- &models.ReceiveResponse{Rsp: rsp, Err: err}:
 		case <-notifyReq.CallerGone:
+			closeErr = errors.New("readLoop() return => caller gone")
 			return
 		}
 	}
@@ -161,21 +182,24 @@ func (pc *PersistConn) readLoop() {
 func (pc *PersistConn) isClosed() bool {
 	pc.closedMutex.RLock()
 	defer pc.closedMutex.RUnlock()
-	return pc.closed
+	return pc.closed != nil
 }
-func (pc *PersistConn) close() {
+func (pc *PersistConn) close(err error) {
+	if err == nil {
+		panic("close with nil err")
+	}
 	pc.closedMutex.Lock()
 	defer pc.closedMutex.Unlock()
-	pc.closeLocked()
+	pc.closeLocked(err)
 }
 
-func (pc *PersistConn) closeLocked() {
-	if pc.closed {
+func (pc *PersistConn) closeLocked(err error) {
+	if pc.closed != nil {
 		return
 	}
-	log.Infof("persisConn[%v].idle close(%v)\n", pc.Name, pc.closed)
-	pc.closed = true
+	log.Debugf("persisConn[%v].closeLocked() : %v\n", pc.Name, err)
 
+	pc.closed = err
 	close(pc.closedCh)
 
 	if pc.idleTimer != nil {

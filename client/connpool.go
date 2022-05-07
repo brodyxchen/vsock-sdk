@@ -1,6 +1,7 @@
 package client
 
 import (
+	"github.com/brodyxchen/vsock/errors"
 	"sync"
 	"time"
 )
@@ -11,7 +12,7 @@ type ConnPool struct {
 
 	idleTimeout time.Duration
 
-	maxCountPerKey int
+	maxCapacityPerKey int
 }
 
 func (cp *ConnPool) Get(key connectKey) *PersistConn {
@@ -34,14 +35,13 @@ func (cp *ConnPool) Get(key connectKey) *PersistConn {
 
 		if pConn.isClosed() {
 			list = list[:len(list)-1]
-			pConn.close()
 			continue
 		}
 
 		tooOld := !idleBegin.IsZero() && pConn.idleAt.Round(0).Before(idleBegin)
 		if tooOld {
 			list = list[:len(list)-1]
-			pConn.close()
+			pConn.close(errors.New("ConnPool.Get() => too old when conn pool get"))
 			continue
 		}
 
@@ -85,11 +85,11 @@ func (cp *ConnPool) Put(conn *PersistConn) {
 		list = make([]*PersistConn, 0)
 	}
 
-	if cp.maxCountPerKey > 0 && len(list) >= cp.maxCountPerKey {
-		cutPoint := len(list) - cp.maxCountPerKey + 1
+	if cp.maxCapacityPerKey > 0 && len(list) >= cp.maxCapacityPerKey {
+		cutPoint := len(list) - cp.maxCapacityPerKey + 1
 		removed := list[:cutPoint]
 		for _, v := range removed {
-			v.close()
+			v.close(errors.New("connPool.Put() => removed than capacity"))
 		}
 		list = list[cutPoint:]
 	}

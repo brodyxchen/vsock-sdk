@@ -19,10 +19,10 @@ func (cli *Client) Init() {
 		cli.transport = &Transport{
 			Name: "transport-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 			connPool: ConnPool{
-				pool:           make(map[connectKey][]*PersistConn, 0),
-				mutex:          sync.RWMutex{},
-				idleTimeout:    constant.MaxConnPoolIdleTimeout,
-				maxCountPerKey: constant.MaxConnPoolCountPerKey,
+				pool:              make(map[connectKey][]*PersistConn, 0),
+				mutex:             sync.RWMutex{},
+				idleTimeout:       constant.MaxConnPoolIdleTimeout,
+				maxCapacityPerKey: constant.MaxConnPoolCountPerKey,
 			},
 			WriteBufferSize: constant.MaxWriteBufferSize,
 			ReadBufferSize:  constant.MaxReadBufferSize,

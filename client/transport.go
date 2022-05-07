@@ -3,6 +3,7 @@ package client
 import (
 	"bufio"
 	"github.com/brodyxchen/vsock/constant"
+	"github.com/brodyxchen/vsock/errors"
 	"github.com/brodyxchen/vsock/log"
 	"github.com/brodyxchen/vsock/models"
 	"github.com/mdlayher/vsock"
@@ -77,7 +78,7 @@ func (tp *Transport) getConn(addr models.Addr, retryCount int) (*PersistConn, er
 		idleTimer:   nil,
 		reused:      false,
 		closedMutex: sync.RWMutex{},
-		closed:      false,
+		closed:      nil,
 		closedCh:    make(chan struct{}, 1),
 	}
 	pConn.bufReader = bufio.NewReaderSize(pConn, tp.readBufferSize())
@@ -86,7 +87,7 @@ func (tp *Transport) getConn(addr models.Addr, retryCount int) (*PersistConn, er
 	go pConn.readLoop()
 	go pConn.writeLoop()
 
-	log.Info("create conn ", tp.Name, pConn.Name)
+	log.Debug("create conn ", tp.Name, pConn.Name)
 	return pConn, nil
 }
 
@@ -117,11 +118,11 @@ func (tp *Transport) roundTrip(req *Request) (*Response, error) {
 		sRsp       *models.Response
 	)
 
-	closeConn := func(pConn *PersistConn) {
+	closeConn := func(pConn *PersistConn, err error) {
 		if pConn == nil {
 			return
 		}
-		pConn.close()
+		pConn.close(err)
 	}
 
 	defer func() {
@@ -131,7 +132,7 @@ func (tp *Transport) roundTrip(req *Request) (*Response, error) {
 		}
 
 		// 关闭conn
-		closeConn(conn)
+		closeConn(conn, errors.New("tp.roundTrip() => "+err.Error()))
 		conn = nil
 	}()
 
@@ -175,7 +176,7 @@ func (tp *Transport) roundTrip(req *Request) (*Response, error) {
 
 		// 准备重试
 		retryCount++
-		closeConn(conn)
+		closeConn(conn, errors.New("round trip retry with "+err.Error()))
 		conn = nil
 	}
 }

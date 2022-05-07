@@ -14,6 +14,7 @@ import (
 )
 
 type Conn struct {
+	Name       string
 	server     *Server
 	remoteAddr string
 
@@ -65,6 +66,8 @@ func (c *Conn) serve(ctx context.Context) {
 		_ = c.rwc.SetWriteDeadline(time.Time{})
 	}
 
+	waitOk := time.Time{}
+
 	waitNext := func() bool {
 		// 阻塞等待 下一份数据
 		if wait := c.server.idleTimeout(); wait != 0 {
@@ -72,6 +75,7 @@ func (c *Conn) serve(ctx context.Context) {
 			if _, err := c.bufReader.Peek(models.HeaderSize); err != nil {
 				return false
 			}
+			waitOk = time.Now()
 			log.Debug("Peek new request bytes")
 
 			_ = c.rwc.SetReadDeadline(time.Time{})
@@ -87,7 +91,13 @@ func (c *Conn) serve(ctx context.Context) {
 		if c.server.ReadTimeout != 0 {
 			_ = c.rwc.SetReadDeadline(now.Add(c.server.ReadTimeout))
 		}
-		header, body, err := socket.ReadSocket(ctx, c.bufReader)
+
+		waitGap := time.Since(waitOk)
+
+		//todo 第一次进来(拨号)，没有Peek，此时可能读取异常
+		// 1. read tcp 127.0.0.1:7070->127.0.0.1:64863: i/o timeout，    可能是对手client， 一直没发送数据？？？？
+		// 2. io.EOF													可能是对手client， 关闭了conn？？？？
+		header, body, err := socket.ReadSocketTest(c.Name, waitGap, ctx, c.bufReader)
 		if err != nil {
 			return
 		}
