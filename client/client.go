@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"github.com/brodyxchen/vsock/models"
+	"github.com/brodyxchen/vsock/protocols"
+	"google.golang.org/protobuf/proto"
 	"strconv"
 	"sync"
 	"time"
@@ -30,11 +32,11 @@ func (cli *Client) Init(cfg *Config) {
 	}
 }
 
-func (cli *Client) Do(addr models.Addr, action uint16, req []byte) ([]byte, error) {
-	return cli.send(addr, action, req, cli.deadline())
+func (cli *Client) Do(addr models.Addr, path string, req []byte) ([]byte, error) {
+	return cli.send(addr, path, req, cli.deadline())
 }
 
-func (cli *Client) send(addr models.Addr, action uint16, body []byte, deadline time.Time) ([]byte, error) {
+func (cli *Client) send(addr models.Addr, path string, body []byte, deadline time.Time) ([]byte, error) {
 	ctx := context.Background()
 	if !deadline.IsZero() {
 		ctxDeadline, cancel := context.WithDeadline(ctx, deadline)
@@ -42,11 +44,16 @@ func (cli *Client) send(addr models.Addr, action uint16, body []byte, deadline t
 		ctx = ctxDeadline
 	}
 
-	req := &Request{
-		ctx:    ctx,
-		Addr:   addr,
-		Action: action,
-		Body:   body,
+	pbReq := &protocols.Request{
+		Path: path,
+		Req:  body,
+	}
+	bodyBytes, _ := proto.Marshal(pbReq)
+
+	req := &models.Request{
+		Ctx:  ctx,
+		Addr: addr,
+		Body: bodyBytes,
 	}
 
 	rsp, err := cli.transport.roundTrip(req)
@@ -54,7 +61,7 @@ func (cli *Client) send(addr models.Addr, action uint16, body []byte, deadline t
 	return rsp.Body, err
 }
 
-func (cli *Client) SendTest(addr models.Addr, action uint16, body []byte, deadline time.Time) (int64, []byte, error) {
+func (cli *Client) SendTest(addr models.Addr, path string, body []byte, deadline time.Time) (int64, []byte, error) {
 	ctx := context.Background()
 	if !deadline.IsZero() {
 		ctxDeadline, cancel := context.WithDeadline(ctx, deadline)
@@ -62,11 +69,16 @@ func (cli *Client) SendTest(addr models.Addr, action uint16, body []byte, deadli
 		ctx = ctxDeadline
 	}
 
-	req := &Request{
-		ctx:    ctx,
-		Addr:   addr,
-		Action: action,
-		Body:   body,
+	pbReq := &protocols.Request{
+		Path: path,
+		Req:  body,
+	}
+	bodyBytes, _ := proto.Marshal(pbReq)
+
+	req := &models.Request{
+		Ctx:  ctx,
+		Addr: addr,
+		Body: bodyBytes,
 	}
 
 	rsp, err := cli.transport.roundTrip(req)

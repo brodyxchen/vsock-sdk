@@ -1,0 +1,15 @@
+syntax = "proto3";
+package accountpb;
+
+option go_package = "github.com/brodyxchen/vsock/protocols";
+
+message Request {
+  string path = 1;
+  bytes req = 2;
+}
+
+message Response {
+  int32 code = 1;
+  bytes rsp = 2;
+  string err = 3;
+}

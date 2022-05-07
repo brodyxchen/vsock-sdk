@@ -109,7 +109,7 @@ func (tp *Transport) putConn(pConn *PersistConn) {
 	tp.connPool.Put(pConn)
 }
 
-func (tp *Transport) roundTrip(req *Request) (*Response, error) {
+func (tp *Transport) roundTrip(req *models.Request) (*models.Response, error) {
 	var (
 		ctx        = req.Context()
 		retryCount = 0
@@ -153,7 +153,7 @@ func (tp *Transport) roundTrip(req *Request) (*Response, error) {
 			Header: models.Header{
 				Magic:   constant.DefaultMagic,
 				Version: constant.DefaultVersion,
-				Code:    req.Action,
+				Code:    0, //todo 一些特殊设置: 比如keepAlive
 				Length:  uint16(len(req.Body)),
 			},
 			Body: req.Body,
@@ -161,13 +161,10 @@ func (tp *Transport) roundTrip(req *Request) (*Response, error) {
 
 		sRsp, err = conn.roundTrip(sReq)
 		if err == nil {
-			return &Response{
-				Req:      req,
-				ConnName: conn.Name,
-				Code:     sRsp.Code,
-				Body:     sRsp.Body,
-			}, nil
+			return sRsp, nil
 		}
+
+		//todo err 是否临时的/网络的？ 是否重试？
 
 		// 是否重试
 		if !conn.reused || retryCount > maxRetryCount {

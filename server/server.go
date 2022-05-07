@@ -12,16 +12,12 @@ import (
 	"time"
 )
 
-const (
-	ActionError = uint16(0)
-)
-
-type handleFunc func(uint16, []byte) []byte
+type handleFunc func([]byte) ([]byte, error)
 
 type Server struct {
 	Addr models.Addr
 
-	handlers map[uint16]handleFunc
+	handlers map[string]handleFunc
 	mutex    sync.RWMutex
 
 	ReadTimeout  time.Duration
@@ -39,24 +35,20 @@ func (srv *Server) getConnIndex() int64 {
 }
 
 func (srv *Server) Init() {
-	srv.handlers = make(map[uint16]handleFunc, 0)
+	srv.handlers = make(map[string]handleFunc, 0)
 	srv.mutex = sync.RWMutex{}
 }
 
-func (srv *Server) HandleAction(action uint16, handleFn handleFunc) {
-	if action == ActionError {
-		panic("invalid action")
-	}
-
+func (srv *Server) HandleAction(path string, handleFn handleFunc) {
 	srv.mutex.Lock()
 	defer srv.mutex.Unlock()
-	srv.handlers[action] = handleFn
+	srv.handlers[path] = handleFn
 }
 
-func (srv *Server) getHandler(action uint16) handleFunc {
+func (srv *Server) getHandler(path string) handleFunc {
 	srv.mutex.RLock()
 	defer srv.mutex.RUnlock()
-	handler, ok := srv.handlers[action]
+	handler, ok := srv.handlers[path]
 	if !ok {
 		return nil
 	}

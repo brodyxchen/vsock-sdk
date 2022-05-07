@@ -5,7 +5,9 @@ import (
 	"github.com/brodyxchen/vsock/errors"
 	"github.com/brodyxchen/vsock/log"
 	"github.com/brodyxchen/vsock/models"
+	"github.com/brodyxchen/vsock/protocols"
 	"github.com/brodyxchen/vsock/socket"
+	"google.golang.org/protobuf/proto"
 	"net"
 	"strconv"
 	"sync"
@@ -129,6 +131,48 @@ func (pc *PersistConn) readLoop() {
 
 	var err error
 
+	wrap := func(header *models.Header, body []byte, err error) (*models.Response, error) {
+		if err != nil {
+			return nil, err
+		}
+		if header.Length == 0 || len(body) <= 0 {
+			return nil, errors.ErrUnknownServerErr
+		}
+		// 服务器 错误
+		if header.Code != 0 {
+			errMsg := string(body)
+			return nil, errors.New(errMsg)
+		}
+
+		var pbBody protocols.Response
+		err = proto.Unmarshal(body, &pbBody)
+		if err != nil {
+			return nil, err
+		}
+
+		rsp := &models.Response{
+			Header: *header,
+			//Code:     0,
+			//Body:     nil,
+			//Err:      nil,
+			Req:      nil,
+			ConnName: pc.Name,
+		}
+
+		// 业务错误
+		if pbBody.Code != 0 {
+			rsp.Code = uint16(pbBody.Code)
+			rsp.Body = nil
+			rsp.Err = errors.New(pbBody.Err)
+		} else {
+			rsp.Code = 0
+			rsp.Body = pbBody.Rsp
+			rsp.Err = nil
+		}
+
+		return rsp, nil
+	}
+
 	var notifyReq *models.NotifyReceive
 	for !pc.isClosed() {
 		_, err = pc.bufReader.Peek(1) // 阻塞		//todo 卡死？
@@ -149,29 +193,16 @@ func (pc *PersistConn) readLoop() {
 
 		notifyReq = <-pc.receiveCh
 
-		var rsp *models.Response
 		keyName := pc.transport.Name + "--" + strconv.FormatInt(pc.Name, 10)
-		header, body, err := socket.ReadSocket(keyName, notifyReq.Req.Ctx, pc.bufReader) //todo 卡死？
-		if err == nil {
-			if header.Code == 0 {
-				rsp = &models.Response{
-					Header: *header,
-					Body:   body,
-				}
-				err = nil
-			} else {
-				// 转换错误
-				rsp = nil
-				if header.Length == 0 {
-					err = errors.ErrUnknownServerErr
-				} else {
-					err = errors.New(string(body))
-				}
-			}
+		header, body, err := socket.ReadSocket(keyName, notifyReq.Req.Ctx, pc.bufReader) //todo 卡死？// 这里err是系统错误，不是业务错误
+
+		rsp, sysErr := wrap(header, body, err)
+		if rsp != nil {
+			rsp.Req = notifyReq.Req
 		}
 
 		select {
-		case notifyReq.Reply <- &models.ReceiveResponse{Rsp: rsp, Err: err}:
+		case notifyReq.Reply <- &models.ReceiveResponse{Rsp: rsp, Err: sysErr}:
 		case <-notifyReq.CallerGone:
 			closeErr = errors.New("readLoop() return => caller gone")
 			return

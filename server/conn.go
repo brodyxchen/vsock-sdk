@@ -3,11 +3,13 @@ package server
 import (
 	"bufio"
 	"context"
-	"github.com/brodyxchen/vsock/client"
 	"github.com/brodyxchen/vsock/constant"
+	"github.com/brodyxchen/vsock/errors"
 	"github.com/brodyxchen/vsock/log"
 	"github.com/brodyxchen/vsock/models"
+	"github.com/brodyxchen/vsock/protocols"
 	"github.com/brodyxchen/vsock/socket"
+	"google.golang.org/protobuf/proto"
 	"net"
 	"runtime"
 	"time"
@@ -31,14 +33,43 @@ func (c *Conn) Write(p []byte) (n int, err error) {
 	return c.rwc.Write(p)
 }
 
-func (c *Conn) handleServe(ctx context.Context, header *models.Header, body []byte) ([]byte, bool) {
-	handler := c.server.getHandler(header.Code)
-	if handler == nil {
-		return nil, false
+func (c *Conn) handleServe(ctx context.Context, body []byte) ([]byte, error) {
+	wrap := func(bytes []byte, err error) []byte {
+		var rsp *protocols.Response
+		if err != nil {
+			rsp = &protocols.Response{
+				Code: 1,
+				Rsp:  nil,
+				Err:  err.Error(),
+			}
+		} else {
+			rsp = &protocols.Response{
+				Code: 0,
+				Rsp:  bytes,
+				Err:  "",
+			}
+		}
+		rspBytes, err := proto.Marshal(rsp)
+		if err != nil {
+			panic(err)
+		}
+		return rspBytes
 	}
 
-	rspBytes := handler(header.Code, body)
-	return rspBytes, true
+	var request protocols.Request
+	err := proto.Unmarshal(body, &request)
+	if err != nil {
+		return nil, errors.StatusInvalidRequest
+	}
+
+	handler := c.server.getHandler(request.Path)
+	if handler == nil {
+		return nil, errors.StatusInvalidPath
+	}
+
+	rsp := wrap(handler(request.Req))
+
+	return rsp, nil
 }
 
 // Serve a new connection.
@@ -97,6 +128,7 @@ func (c *Conn) serve(ctx context.Context) {
 		//todo 第一次进来(拨号)，没有Peek，此时可能读取异常
 		// 1. read tcp 127.0.0.1:7070->127.0.0.1:64863: i/o timeout，    可能是对手client， 一直没发送数据？？？？
 		// 2. io.EOF													可能是对手client， 关闭了conn？？？？
+
 		header, body, err := socket.ReadSocketTest(c.Name, waitGap, ctx, c.bufReader)
 		if err != nil {
 			return
@@ -108,26 +140,18 @@ func (c *Conn) serve(ctx context.Context) {
 			_ = c.rwc.SetWriteDeadline(time.Now().Add(c.server.WriteTimeout))
 		}
 		// handle
-		rspBytes, ok := c.handleServe(ctx, header, body)
-		if !ok {
-			err = c.responseError(ctx, client.CodeInvalidAction, "invalid action")
-			if err != nil {
+		rspBytes, status := c.handleServe(ctx, body)
+		if status != nil {
+			if err = c.responseStatus(ctx, status.(*errors.Status)); err != nil {
 				return
 			}
-			if !waitNext() {
+		} else {
+			if err = c.responseSuccess(ctx, header, rspBytes); err != nil {
 				return
 			}
-			continue
 		}
 
-		// 响应rsp
-		header.Code = 0
-		header.Length = uint16(len(rspBytes))
-		err = socket.WriteSocket(ctx, c.bufWriter, header, rspBytes)
-		if err != nil {
-			return
-		}
-
+		// keepAlive
 		if !c.server.doKeepAlives() {
 			return
 		}
@@ -137,16 +161,22 @@ func (c *Conn) serve(ctx context.Context) {
 	}
 }
 
-func (c *Conn) responseError(ctx context.Context, code uint16, msg string) error {
-	log.Debug("responseError : ", msg)
+func (c *Conn) responseSuccess(ctx context.Context, header *models.Header, rspBytes []byte) error {
+	header.Code = 0
+	header.Length = uint16(len(rspBytes))
+	return socket.WriteSocket(ctx, c.bufWriter, header, rspBytes)
+}
+
+func (c *Conn) responseStatus(ctx context.Context, status *errors.Status) error {
+	log.Debug("responseStatus : ", status.Error())
 
 	header := &models.Header{
 		Magic:   constant.DefaultMagic,
 		Version: constant.DefaultVersion,
-		Code:    code,
+		Code:    status.Code(),
 		Length:  0,
 	}
-	body := []byte(msg)
+	body := []byte(status.Error())
 	header.Length = uint16(len(body))
 
 	return socket.WriteSocket(ctx, c.bufWriter, header, body)

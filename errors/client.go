@@ -2,6 +2,23 @@ package errors
 
 import "errors"
 
+//type Error struct {
+//
+//}
+//
+//func (er *Error) Temporary() {
+//
+//}
+//func (er *Error) IsClient() bool {
+//
+//}
+//func (er *Error) IsNetwork() bool {
+//
+//}
+//func (er *Error) IsServer() bool {
+//
+//}
+
 var (
 	ErrUnknownServerErr = errors.New("unknown server error")
 	ErrReadTimeout      = errors.New("read response timeout")

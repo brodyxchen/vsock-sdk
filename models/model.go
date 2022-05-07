@@ -16,14 +16,29 @@ type Header struct {
 }
 
 type Request struct {
-	Ctx context.Context
 	Header
+
+	Ctx  context.Context
+	Addr Addr
 	Body []byte
+}
+
+func (r *Request) Context() context.Context {
+	if r.Ctx != nil {
+		return r.Ctx
+	}
+	return context.Background()
 }
 
 type Response struct {
 	Header
+
+	Code uint16
 	Body []byte
+	Err  error // 业务错误
+
+	Req      *Request
+	ConnName int64
 }
 
 type SendRequest struct {
