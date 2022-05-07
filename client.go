@@ -2,13 +2,13 @@ package vsock
 
 import (
 	"github.com/brodyxchen/vsock/client"
-	"time"
 )
 
-func NewClient(timeout time.Duration) *client.Client {
+func NewClient(cfg *client.Config) *client.Client {
 	cli := &client.Client{
-		Timeout: timeout,
+		Timeout: cfg.GetTimeout(),
 	}
-	cli.Init()
+	cli.Init(cfg)
+
 	return cli
 }

@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"github.com/brodyxchen/vsock/constant"
 	"github.com/brodyxchen/vsock/models"
 	"strconv"
 	"sync"
@@ -14,18 +13,18 @@ type Client struct {
 	Timeout   time.Duration
 }
 
-func (cli *Client) Init() {
+func (cli *Client) Init(cfg *Config) {
 	if cli.transport == nil {
 		cli.transport = &Transport{
 			Name: "transport-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 			connPool: ConnPool{
 				pool:              make(map[connectKey][]*PersistConn, 0),
 				mutex:             sync.RWMutex{},
-				idleTimeout:       constant.MaxConnPoolIdleTimeout,
-				maxCapacityPerKey: constant.MaxConnPoolCountPerKey,
+				idleTimeout:       cfg.GetPoolIdleTimeout(),
+				maxCapacityPerKey: cfg.GetPoolMaxCapacity(),
 			},
-			WriteBufferSize: constant.MaxWriteBufferSize,
-			ReadBufferSize:  constant.MaxReadBufferSize,
+			WriteBufferSize: cfg.GetWriteBufferSize(),
+			ReadBufferSize:  cfg.GetReadBufferSize(),
 			connIndex:       0,
 		}
 	}
