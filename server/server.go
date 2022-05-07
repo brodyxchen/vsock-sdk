@@ -39,7 +39,7 @@ func (srv *Server) Init() {
 	srv.mutex = sync.RWMutex{}
 }
 
-func (srv *Server) HandleAction(path string, handleFn handleFunc) {
+func (srv *Server) HandleFunc(path string, handleFn handleFunc) {
 	srv.mutex.Lock()
 	defer srv.mutex.Unlock()
 	srv.handlers[path] = handleFn

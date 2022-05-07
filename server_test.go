@@ -22,7 +22,7 @@ func LaunchCustomExampleServer(port uint32, readTimeout, writeTimeout, idleTimeo
 	}
 
 	//type handleFunc func([]byte) ([]byte, error)
-	srv.HandleAction("test", func(bytes []byte) ([]byte, error) {
+	srv.HandleFunc("test", func(bytes []byte) ([]byte, error) {
 		return handleFn(bytes)
 	})
 
