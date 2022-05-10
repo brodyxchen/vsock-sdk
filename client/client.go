@@ -57,11 +57,18 @@ func (cli *Client) send(addr models.Addr, path string, body []byte, deadline tim
 	}
 
 	rsp, err := cli.transport.roundTrip(req)
+
+	// 系统错误
 	if err != nil {
 		return nil, err
 	}
 
-	return rsp.Body, err
+	// 业务错误
+	if rsp.Err != nil {
+		return nil, rsp.Err
+	}
+
+	return rsp.Body, nil
 }
 
 func (cli *Client) SendTest(addr models.Addr, path string, body []byte, deadline time.Time) (int64, []byte, error) {
