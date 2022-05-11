@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"github.com/brodyxchen/vsock/constant"
 	"github.com/brodyxchen/vsock/errors"
 	"github.com/brodyxchen/vsock/log"
@@ -74,7 +75,8 @@ func (c *Conn) handleServe(ctx context.Context, body []byte) ([]byte, error) {
 
 // Serve a new connection.
 func (c *Conn) serve(ctx context.Context) {
-	defer c.Close()
+	closeErr := errors.New("serve default close")
+	defer c.Close(closeErr)
 
 	c.remoteAddr = c.rwc.RemoteAddr().String()
 
@@ -104,6 +106,7 @@ func (c *Conn) serve(ctx context.Context) {
 		if wait := c.server.idleTimeout(); wait != 0 {
 			_ = c.rwc.SetReadDeadline(time.Now().Add(wait))
 			if _, err := c.bufReader.Peek(models.HeaderSize); err != nil {
+				closeErr = errors.New("serve peek err : " + err.Error()) // io.EOF  or i/o timeout
 				return false
 			}
 			waitOk = time.Now()
@@ -112,6 +115,7 @@ func (c *Conn) serve(ctx context.Context) {
 			_ = c.rwc.SetReadDeadline(time.Time{})
 			return true
 		}
+
 		return false
 	}
 
@@ -131,6 +135,7 @@ func (c *Conn) serve(ctx context.Context) {
 
 		header, body, err := socket.ReadSocketTest(c.Name, waitGap, ctx, c.bufReader)
 		if err != nil {
+			closeErr = err
 			return
 		}
 		log.Debugf("readSocket : %+v\n", header)
@@ -153,6 +158,7 @@ func (c *Conn) serve(ctx context.Context) {
 
 		// keepAlive
 		if !c.server.doKeepAlives() {
+			closeErr = errors.ErrNoKeepAlive
 			return
 		}
 		if !waitNext() {
@@ -182,7 +188,8 @@ func (c *Conn) responseStatus(ctx context.Context, status *errors.Status) error 
 	return socket.WriteSocket(ctx, c.bufWriter, header, body)
 }
 
-func (c *Conn) Close() {
+func (c *Conn) Close(err error) {
+	fmt.Println("conn.close() ", c.Name, err)
 	_ = c.rwc.Close()
 
 	putBufReader(c.bufReader)

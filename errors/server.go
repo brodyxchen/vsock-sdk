@@ -20,6 +20,8 @@ var (
 	ErrInvalidHeader      = errors.New("invalid header")
 	ErrInvalidHeaderMagic = errors.New("invalid header magic number")
 	ErrInvalidBody        = errors.New("invalid body")
+
+	ErrNoKeepAlive = errors.New("no keep alive")
 )
 
 var (
