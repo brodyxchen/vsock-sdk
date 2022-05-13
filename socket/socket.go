@@ -6,17 +6,15 @@ import (
 	"encoding/binary"
 	"github.com/brodyxchen/vsock/constant"
 	"github.com/brodyxchen/vsock/errors"
-	"github.com/brodyxchen/vsock/log"
 	"github.com/brodyxchen/vsock/models"
 	"io"
 	"math"
-	"time"
 )
 
-func ReadSocket(key string, ctx context.Context, reader *bufio.Reader) (*models.Header, []byte, error) {
+func ReadSocket(ctx context.Context, reader *bufio.Reader) (*models.Header, []byte, bool, error) {
 	select {
 	case <-ctx.Done():
-		return nil, nil, errors.ErrCtxReadDone
+		return nil, nil, false, errors.ErrCtxReadDone
 	default:
 	}
 
@@ -26,21 +24,17 @@ func ReadSocket(key string, ctx context.Context, reader *bufio.Reader) (*models.
 	n, err := io.ReadFull(reader, headerBuf)
 	if err != nil {
 		if err == io.EOF {
-			log.Errorf("%v.readSocket() read header err == io.EOF, n=%v\n", key, n)
-			return nil, nil, io.ErrUnexpectedEOF
+			return nil, nil, true, io.ErrUnexpectedEOF
 		}
-		log.Errorf("%v.readSocket() read header err != nil: %v\n", key, err)
-		return nil, nil, err
+		return nil, nil, true, err
 	}
 	if n < models.HeaderSize {
-		log.Errorf("server.readSocket() read header n(%v) < HeaderSize\n", n)
-		return nil, nil, errors.ErrInvalidHeader
+		return nil, nil, false, errors.ErrInvalidHeader
 	}
 
 	header.Magic = binary.BigEndian.Uint16(headerBuf[:])
 	if header.Magic != constant.DefaultMagic {
-		log.Errorf("server.readSocket() header.Magic(%v) != defaultMagic\n", header.Magic)
-		return nil, nil, errors.ErrInvalidHeaderMagic
+		return nil, nil, false, errors.ErrInvalidHeaderMagic
 	}
 
 	header.Version = binary.BigEndian.Uint16(headerBuf[2:])
@@ -48,89 +42,35 @@ func ReadSocket(key string, ctx context.Context, reader *bufio.Reader) (*models.
 	header.Length = binary.BigEndian.Uint16(headerBuf[6:])
 
 	if header.Length <= 0 {
-		return header, nil, nil
+		return header, nil, false, nil
 	}
 
 	bodyBuf := make([]byte, header.Length)
 	n, err = io.ReadFull(reader, bodyBuf)
 	if err != nil {
 		if err == io.EOF {
-			return header, nil, io.ErrUnexpectedEOF
+			return header, nil, true, io.ErrUnexpectedEOF
 		}
-		return nil, nil, err
+		return nil, nil, true, err
 	}
 
 	if n < int(header.Length) {
-		return nil, nil, errors.ErrInvalidBody
+		return nil, nil, false, errors.ErrInvalidBody
 	}
 
-	return header, bodyBuf, err
+	return header, bodyBuf, false, nil
 }
 
-func ReadSocketTest(key string, waitTime time.Duration, ctx context.Context, reader *bufio.Reader) (*models.Header, []byte, error) {
+func WriteSocket(ctx context.Context, writer *bufio.Writer, header *models.Header, body []byte) (bool, error) {
 	select {
 	case <-ctx.Done():
-		return nil, nil, errors.ErrCtxReadDone
-	default:
-	}
-
-	header := &models.Header{}
-
-	headerBuf := make([]byte, models.HeaderSize)
-	n, err := io.ReadFull(reader, headerBuf)
-	if err != nil {
-		if err == io.EOF {
-			log.Errorf("%v.readSocketTest() read header err == io.EOF, n=%v, gapTime=%v\n", key, n, waitTime)
-			return nil, nil, io.ErrUnexpectedEOF
-		}
-		log.Errorf("%v.readSocketTest() read header err != nil: %v,  gapTime=%v\n", key, err, waitTime)
-		return nil, nil, err
-	}
-	if n < models.HeaderSize {
-		log.Errorf("server.readSocketTest() read header n(%v) < HeaderSize\n", n)
-		return nil, nil, errors.ErrInvalidHeader
-	}
-
-	header.Magic = binary.BigEndian.Uint16(headerBuf[:])
-	if header.Magic != constant.DefaultMagic {
-		log.Errorf("server.readSocketTest() header.Magic(%v) != defaultMagic\n", header.Magic)
-		return nil, nil, errors.ErrInvalidHeaderMagic
-	}
-
-	header.Version = binary.BigEndian.Uint16(headerBuf[2:])
-	header.Code = binary.BigEndian.Uint16(headerBuf[4:])
-	header.Length = binary.BigEndian.Uint16(headerBuf[6:])
-
-	if header.Length <= 0 {
-		return header, nil, nil
-	}
-
-	bodyBuf := make([]byte, header.Length)
-	n, err = io.ReadFull(reader, bodyBuf)
-	if err != nil {
-		if err == io.EOF {
-			return header, nil, io.ErrUnexpectedEOF
-		}
-		return nil, nil, err
-	}
-
-	if n < int(header.Length) {
-		return nil, nil, errors.ErrInvalidBody
-	}
-
-	return header, bodyBuf, err
-}
-
-func WriteSocket(ctx context.Context, writer *bufio.Writer, header *models.Header, body []byte) error {
-	select {
-	case <-ctx.Done():
-		return errors.ErrCtxWriteDone
+		return false, errors.ErrCtxWriteDone
 	default:
 	}
 
 	length := len(body)
 	if length > math.MaxUint16 {
-		return errors.ErrExceedBody
+		return false, errors.ErrExceedBody
 	}
 	header.Length = uint16(length)
 
@@ -145,13 +85,13 @@ func WriteSocket(ctx context.Context, writer *bufio.Writer, header *models.Heade
 
 	_, err := writer.Write(buf)
 	if err != nil {
-		return err
+		return true, err
 	}
 
 	err = writer.Flush()
 	if err != nil {
-		return err
+		return true, err
 	}
 
-	return nil
+	return false, nil
 }
