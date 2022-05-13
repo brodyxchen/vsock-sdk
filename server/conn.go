@@ -76,7 +76,9 @@ func (c *Conn) handleServe(ctx context.Context, body []byte) ([]byte, error) {
 // Serve a new connection.
 func (c *Conn) serve(ctx context.Context) {
 	closeErr := errors.New("serve default close")
-	defer c.Close(closeErr)
+	defer func() {
+		c.Close(closeErr)
+	}()
 
 	c.remoteAddr = c.rwc.RemoteAddr().String()
 
@@ -99,14 +101,13 @@ func (c *Conn) serve(ctx context.Context) {
 		_ = c.rwc.SetWriteDeadline(time.Time{})
 	}
 
-	waitOk := time.Time{}
-
 	waitNext := func() bool {
 		// 阻塞等待 下一份数据
 		if wait := c.server.idleTimeout(); wait != 0 {
 			_ = c.rwc.SetReadDeadline(time.Now().Add(wait))
-			if _, err := c.bufReader.Peek(models.HeaderSize); err != nil {
-				closeErr = errors.New("serve peek err : " + err.Error()) // io.EOF  or i/o timeout
+			_, err := c.bufReader.Peek(1) //models.HeaderSize
+			if err != nil {
+				closeErr = errors.New("serve wait peek err : " + err.Error()) // io.EOF 代表对面关闭了  or i/o timeout
 				return false
 			}
 			waitOk = time.Now()
@@ -120,20 +121,20 @@ func (c *Conn) serve(ctx context.Context) {
 	}
 
 	for {
-		now := time.Now()
+		if !waitNext() {
+			return
+		}
 
 		// 设置底层conn read超时
+		now := time.Now()
 		if c.server.ReadTimeout != 0 {
 			_ = c.rwc.SetReadDeadline(now.Add(c.server.ReadTimeout))
 		}
 
-		waitGap := time.Since(waitOk)
+		readNow := time.Now()
+		header, body, err := socket.ReadSocketTest(c.Name, ctx, c.bufReader)
+		c.server.readHist.Update(time.Since(readNow).Milliseconds())
 
-		//todo 第一次进来(拨号)，没有Peek，此时可能读取异常
-		// 1. read tcp 127.0.0.1:7070->127.0.0.1:64863: i/o timeout，    可能是对手client， 一直没发送数据？？？？
-		// 2. io.EOF													可能是对手client， 关闭了conn？？？？
-
-		header, body, err := socket.ReadSocketTest(c.Name, waitGap, ctx, c.bufReader)
 		if err != nil {
 			closeErr = err
 			return
@@ -159,9 +160,6 @@ func (c *Conn) serve(ctx context.Context) {
 		// keepAlive
 		if !c.server.doKeepAlives() {
 			closeErr = errors.ErrNoKeepAlive
-			return
-		}
-		if !waitNext() {
 			return
 		}
 	}
