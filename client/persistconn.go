@@ -8,8 +8,8 @@ import (
 	"github.com/brodyxchen/vsock/protocols"
 	"github.com/brodyxchen/vsock/socket"
 	"google.golang.org/protobuf/proto"
+	"io"
 	"net"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -39,8 +39,10 @@ type PersistConn struct {
 
 // roundTrip 一次往返，不处理关闭和链接池， 由上层transport处理
 func (pc *PersistConn) roundTrip(req *models.Request) (*models.Response, error) {
-	gone := make(chan struct{})
+	gone := make(chan struct{}) //todo 多余的不？
 	defer close(gone)
+
+	sendNow := time.Now()
 
 	// 发送数据
 	sendReply := make(chan error, 1)
@@ -54,32 +56,23 @@ func (pc *PersistConn) roundTrip(req *models.Request) (*models.Response, error) 
 		CallerGone: gone,
 	}
 
-	var (
-		receiveTimer <-chan time.Time
-		ctxDone      = req.Ctx.Done()
-	)
-
 	for {
 		select {
 		case err := <-sendReply:
+			pc.transport.sendDoneHist.Update(time.Since(sendNow).Milliseconds())
 			if err != nil {
 				return nil, err
 			}
-			// 发送成功，则设置读取超时
-			if d := pc.transport.receiveTimeout; d > 0 {
-				timer := time.NewTimer(d)
-				defer timer.Stop()
-				receiveTimer = timer.C
-			}
 		case rpy := <-receiveReply:
+			pc.transport.receiveHist.Update(time.Since(sendNow).Milliseconds())
 			return rpy.Rsp, rpy.Err
 
 		// 异常处理
 		case <-pc.closedCh: // 外部关闭
+			pc.transport.receiveTimeoutHist.Update(time.Since(sendNow).Milliseconds())
 			return nil, errors.ErrConnEarlyClose
-		case <-receiveTimer: // 接收超时
-			return nil, errors.ErrReadTimeout
-		case <-ctxDone: // ctx结束
+		case <-req.Ctx.Done(): // ctx结束
+			pc.transport.receiveTimeoutHist.Update(time.Since(sendNow).Milliseconds())
 			return nil, errors.ErrCtxRoundDone
 		}
 	}
@@ -96,11 +89,9 @@ func (pc *PersistConn) Write(p []byte) (n int, err error) {
 }
 
 func (pc *PersistConn) closeAndRemove() {
-	//log.Infof("persisConn[%v].idle closeAndRemove()\n", pc.Name)
 	if !pc.transport.removeConn(pc) {
 		return
 	}
-
 	pc.close(errors.New("pc.closeAndRemove() => idle timer close"))
 }
 
@@ -111,33 +102,35 @@ func (pc *PersistConn) writeLoop() {
 			return
 		case writeReq := <-pc.sendCh:
 			req := writeReq.Req
-			err := socket.WriteSocket(req.Ctx, pc.bufWriter, &req.Header, req.Body) //todo 卡死？
+			broken, err := socket.WriteSocket(req.Ctx, pc.bufWriter, &req.Header, req.Body)
 			if err != nil {
 				writeReq.Reply <- err
-				pc.close(err)
-				return
-			}
 
-			writeReq.Reply <- nil
+				if broken {
+					pc.close(err)
+					return
+				}
+			} else {
+				writeReq.Reply <- nil
+			}
 		}
 	}
 }
 
 func (pc *PersistConn) readLoop() {
 	closeErr := errors.New("pc.readLoop() => default exiting")
+
 	defer func() {
 		pc.close(closeErr)
 	}()
 
 	var err error
 
-	wrap := func(header *models.Header, body []byte, err error) (*models.Response, error) {
-		if err != nil {
-			return nil, err
-		}
+	wrap := func(header *models.Header, body []byte) (*models.Response, error) {
 		if header.Length == 0 || len(body) <= 0 {
 			return nil, errors.ErrUnknownServerErr
 		}
+
 		// 服务器 错误
 		if header.Code != 0 {
 			errMsg := string(body)
@@ -151,10 +144,7 @@ func (pc *PersistConn) readLoop() {
 		}
 
 		rsp := &models.Response{
-			Header: *header,
-			//Code:     0,
-			//Body:     nil,
-			//Err:      nil,
+			Header:   *header,
 			Req:      nil,
 			ConnName: pc.Name,
 		}
@@ -173,38 +163,36 @@ func (pc *PersistConn) readLoop() {
 		return rsp, nil
 	}
 
-	var notifyReq *models.NotifyReceive
+	var (
+		notifyReq *models.NotifyReceive
+		rsp       *models.Response
+	)
 	for !pc.isClosed() {
-		_, err = pc.bufReader.Peek(1) // 阻塞		//todo 卡死？
+		_, err = pc.bufReader.Peek(1) // 阻塞
 		if err != nil {
-			//errMsg := err.Error()
-			//todo client 这里isClosed标志没有关闭， 但是conn关闭了
-			// 可能1. 其他go关闭， 2. 对手关闭,  3. 中间网络关闭
-
-			//isClose := pc.isClosed()
-			//if !isClose {
-			//	fmt.Printf("persisConn[%v].readLoop[%v] Peek err: %v\n", pc.Name, pc.isClosed(), errMsg)	//todo true read tcp 127.0.0.1:52492->127.0.0.1:7070: use of closed network connection
-			//}
-
-			//fmt.Println(pc.isClosed(), errMsg)
 			closeErr = errors.New("readLoop() peek err => " + err.Error())
 			return
 		}
 
 		notifyReq = <-pc.receiveCh
 
-		keyName := pc.transport.Name + "--" + strconv.FormatInt(pc.Name, 10)
-		header, body, err := socket.ReadSocket(keyName, notifyReq.Req.Ctx, pc.bufReader) //todo 卡死？// 这里err是系统错误，不是业务错误
-
-		rsp, sysErr := wrap(header, body, err)
-		if rsp != nil {
-			rsp.Req = notifyReq.Req
+		header, body, broken, err := socket.ReadSocket(notifyReq.Req.Ctx, pc.bufReader)
+		if err == nil {
+			rsp, err = wrap(header, body)
+			if rsp != nil {
+				rsp.Req = notifyReq.Req
+			}
+		} else {
+			rsp = nil
 		}
 
 		select {
-		case notifyReq.Reply <- &models.ReceiveResponse{Rsp: rsp, Err: sysErr}:
+		case notifyReq.Reply <- &models.ReceiveResponse{Rsp: rsp, Err: err}:
 		case <-notifyReq.CallerGone:
-			closeErr = errors.New("readLoop() return => caller gone")
+		}
+
+		if err != nil && broken {
+			closeErr = err
 			return
 		}
 	}
@@ -238,4 +226,9 @@ func (pc *PersistConn) closeLocked(err error) {
 	}
 
 	_ = pc.conn.Close()
+}
+func (pc *PersistConn) CloseTest() {
+	pc.closedMutex.Lock()
+	defer pc.closedMutex.Unlock()
+	pc.closeLocked(io.EOF)
 }
