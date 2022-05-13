@@ -75,6 +75,8 @@ func (c *Conn) handleServe(ctx context.Context, body []byte) ([]byte, error) {
 
 // Serve a new connection.
 func (c *Conn) serve(ctx context.Context) {
+	defer c.server.connsHist.Dec(1)
+
 	closeErr := errors.New("serve default close")
 	defer func() {
 		c.Close(closeErr)
@@ -101,27 +103,26 @@ func (c *Conn) serve(ctx context.Context) {
 		_ = c.rwc.SetWriteDeadline(time.Time{})
 	}
 
-	waitNext := func() bool {
-		// 阻塞等待 下一份数据
-		if wait := c.server.idleTimeout(); wait != 0 {
-			_ = c.rwc.SetReadDeadline(time.Now().Add(wait))
-			_, err := c.bufReader.Peek(1) //models.HeaderSize
-			if err != nil {
-				closeErr = errors.New("serve wait peek err : " + err.Error()) // io.EOF 代表对面关闭了  or i/o timeout
-				return false
-			}
-			waitOk = time.Now()
-			log.Debug("Peek new request bytes")
+	waitNext := func() error { // 阻塞等待 下一份数据
+		wait := c.server.idleTimeout()
 
+		if wait != 0 {
+			_ = c.rwc.SetReadDeadline(time.Now().Add(wait))
+		} else {
 			_ = c.rwc.SetReadDeadline(time.Time{})
-			return true
 		}
 
-		return false
+		_, err := c.bufReader.Peek(1) //models.HeaderSize
+		if err != nil {
+			return errors.New("serve wait peek err : " + err.Error()) // io.EOF 代表对面关闭了  or i/o timeout
+		}
+		_ = c.rwc.SetReadDeadline(time.Time{})
+		return nil
 	}
 
 	for {
-		if !waitNext() {
+		if err := waitNext(); err != nil {
+			closeErr = err
 			return
 		}
 
@@ -132,14 +133,16 @@ func (c *Conn) serve(ctx context.Context) {
 		}
 
 		readNow := time.Now()
-		header, body, err := socket.ReadSocketTest(c.Name, ctx, c.bufReader)
+		header, body, broken, err := socket.ReadSocket(ctx, c.bufReader)
 		c.server.readHist.Update(time.Since(readNow).Milliseconds())
 
 		if err != nil {
-			closeErr = err
-			return
+			if broken {
+				closeErr = err
+				return
+			}
+			continue
 		}
-		log.Debugf("readSocket : %+v\n", header)
 
 		// 设置底层conn write超时
 		if c.server.WriteTimeout != 0 {
@@ -147,12 +150,20 @@ func (c *Conn) serve(ctx context.Context) {
 		}
 		// handle
 		rspBytes, status := c.handleServe(ctx, body)
+
+		writeNow := time.Now()
 		if status != nil {
-			if err = c.responseStatus(ctx, status.(*errors.Status)); err != nil {
+			broken, err := c.responseStatus(ctx, status.(*errors.Status))
+			c.server.writeHist.Update(time.Since(writeNow).Milliseconds())
+			if err != nil && broken {
+				closeErr = err
 				return
 			}
 		} else {
-			if err = c.responseSuccess(ctx, header, rspBytes); err != nil {
+			broken, err := c.responseSuccess(ctx, header, rspBytes)
+			c.server.writeHist.Update(time.Since(writeNow).Milliseconds())
+			if err != nil && broken {
+				closeErr = err
 				return
 			}
 		}
@@ -165,15 +176,13 @@ func (c *Conn) serve(ctx context.Context) {
 	}
 }
 
-func (c *Conn) responseSuccess(ctx context.Context, header *models.Header, rspBytes []byte) error {
+func (c *Conn) responseSuccess(ctx context.Context, header *models.Header, rspBytes []byte) (bool, error) {
 	header.Code = 0
 	header.Length = uint16(len(rspBytes))
 	return socket.WriteSocket(ctx, c.bufWriter, header, rspBytes)
 }
 
-func (c *Conn) responseStatus(ctx context.Context, status *errors.Status) error {
-	log.Debug("responseStatus : ", status.Error())
-
+func (c *Conn) responseStatus(ctx context.Context, status *errors.Status) (bool, error) {
 	header := &models.Header{
 		Magic:   constant.DefaultMagic,
 		Version: constant.DefaultVersion,
