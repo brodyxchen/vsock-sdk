@@ -4,6 +4,8 @@ import (
 	"context"
 	"github.com/brodyxchen/vsock/log"
 	"github.com/brodyxchen/vsock/models"
+	"github.com/brodyxchen/vsock/statistics"
+	"github.com/brodyxchen/vsock/statistics/metrics"
 	"github.com/mdlayher/vsock"
 	"net"
 	"strconv"
@@ -27,6 +29,10 @@ type Server struct {
 	DisableKeepAlives int32 // accessed atomically.
 
 	connIndex int64 // atomic visit
+
+	connsHist metrics.Counter
+	readHist  metrics.Histogram
+	writeHist metrics.Histogram
 }
 
 func (srv *Server) getConnIndex() int64 {
@@ -83,6 +89,21 @@ func (srv *Server) Serve(l net.Listener) error {
 
 	var tempDelay time.Duration // how long to sleep on accept failure
 
+	acceptHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	_ = statistics.ServerReg.Register("accept", acceptHist)
+
+	connsHist := metrics.NewCounter()
+	readHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	handleHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	writeHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	_ = statistics.ServerReg.Register("srv.alive.conns", connsHist)
+	_ = statistics.ServerReg.Register("srv.read.costMs", readHist)
+	_ = statistics.ServerReg.Register("srv.hand", handleHist)
+	_ = statistics.ServerReg.Register("srv.write.costMs", writeHist)
+	srv.connsHist = connsHist
+	srv.readHist = readHist
+	srv.writeHist = writeHist
+
 	for {
 		rw, err := l.Accept()
 		if err != nil {
@@ -93,12 +114,17 @@ func (srv *Server) Serve(l net.Listener) error {
 			return err
 		}
 
-		log.Debug("l.accept conn...")
+		acceptNow := time.Now()
+
 		connCtx := ctx
 		tempDelay = 0
 
 		c := srv.newConn(rw)
+
+		srv.connsHist.Inc(1)
 		go c.serve(connCtx)
+
+		acceptHist.Update(time.Since(acceptNow).Milliseconds())
 	}
 }
 

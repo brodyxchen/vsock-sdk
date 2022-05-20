@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"github.com/brodyxchen/vsock/constant"
 	"github.com/brodyxchen/vsock/errors"
 	"github.com/brodyxchen/vsock/log"
@@ -10,6 +11,7 @@ import (
 	"github.com/brodyxchen/vsock/protocols"
 	"github.com/brodyxchen/vsock/socket"
 	"google.golang.org/protobuf/proto"
+	"io"
 	"net"
 	"runtime"
 	"time"
@@ -74,7 +76,12 @@ func (c *Conn) handleServe(ctx context.Context, body []byte) ([]byte, error) {
 
 // Serve a new connection.
 func (c *Conn) serve(ctx context.Context) {
-	defer c.Close()
+	defer c.server.connsHist.Dec(1)
+
+	closeErr := errors.New("serve default close")
+	defer func() {
+		c.Close(closeErr)
+	}()
 
 	c.remoteAddr = c.rwc.RemoteAddr().String()
 
@@ -97,43 +104,52 @@ func (c *Conn) serve(ctx context.Context) {
 		_ = c.rwc.SetWriteDeadline(time.Time{})
 	}
 
-	waitOk := time.Time{}
+	waitNext := func() error { // 阻塞等待 下一份数据
+		for {
+			wait := c.server.idleTimeout()
 
-	waitNext := func() bool {
-		// 阻塞等待 下一份数据
-		if wait := c.server.idleTimeout(); wait != 0 {
-			_ = c.rwc.SetReadDeadline(time.Now().Add(wait))
-			if _, err := c.bufReader.Peek(models.HeaderSize); err != nil {
-				return false
+			if wait != 0 {
+				_ = c.rwc.SetReadDeadline(time.Now().Add(wait))
+			} else {
+				_ = c.rwc.SetReadDeadline(time.Time{})
 			}
-			waitOk = time.Now()
-			log.Debug("Peek new request bytes")
 
+			_, err := c.bufReader.Peek(1) //models.HeaderSize
+			if err != nil {
+				if err == io.EOF {
+					continue
+				}
+				return errors.New("serve wait peek err : " + err.Error()) // io.EOF 代表对面关闭了???  or i/o timeout
+			}
 			_ = c.rwc.SetReadDeadline(time.Time{})
-			return true
+			return nil
 		}
-		return false
+
 	}
 
 	for {
-		now := time.Now()
+		if err := waitNext(); err != nil {
+			closeErr = err
+			return
+		}
 
 		// 设置底层conn read超时
+		now := time.Now()
 		if c.server.ReadTimeout != 0 {
 			_ = c.rwc.SetReadDeadline(now.Add(c.server.ReadTimeout))
 		}
 
-		waitGap := time.Since(waitOk)
+		readNow := time.Now()
+		header, body, broken, err := socket.ReadSocket(ctx, c.bufReader)
+		c.server.readHist.Update(time.Since(readNow).Milliseconds())
 
-		//todo 第一次进来(拨号)，没有Peek，此时可能读取异常
-		// 1. read tcp 127.0.0.1:7070->127.0.0.1:64863: i/o timeout，    可能是对手client， 一直没发送数据？？？？
-		// 2. io.EOF													可能是对手client， 关闭了conn？？？？
-
-		header, body, err := socket.ReadSocketTest(c.Name, waitGap, ctx, c.bufReader)
 		if err != nil {
-			return
+			if broken {
+				closeErr = err
+				return
+			}
+			continue
 		}
-		log.Debugf("readSocket : %+v\n", header)
 
 		// 设置底层conn write超时
 		if c.server.WriteTimeout != 0 {
@@ -141,35 +157,39 @@ func (c *Conn) serve(ctx context.Context) {
 		}
 		// handle
 		rspBytes, status := c.handleServe(ctx, body)
+
+		writeNow := time.Now()
 		if status != nil {
-			if err = c.responseStatus(ctx, status.(*errors.Status)); err != nil {
+			broken, err := c.responseStatus(ctx, status.(*errors.Status))
+			c.server.writeHist.Update(time.Since(writeNow).Milliseconds())
+			if err != nil && broken {
+				closeErr = err
 				return
 			}
 		} else {
-			if err = c.responseSuccess(ctx, header, rspBytes); err != nil {
+			broken, err := c.responseSuccess(ctx, header, rspBytes)
+			c.server.writeHist.Update(time.Since(writeNow).Milliseconds())
+			if err != nil && broken {
+				closeErr = err
 				return
 			}
 		}
 
 		// keepAlive
 		if !c.server.doKeepAlives() {
-			return
-		}
-		if !waitNext() {
+			closeErr = errors.ErrNoKeepAlive
 			return
 		}
 	}
 }
 
-func (c *Conn) responseSuccess(ctx context.Context, header *models.Header, rspBytes []byte) error {
+func (c *Conn) responseSuccess(ctx context.Context, header *models.Header, rspBytes []byte) (bool, error) {
 	header.Code = 0
 	header.Length = uint16(len(rspBytes))
 	return socket.WriteSocket(ctx, c.bufWriter, header, rspBytes)
 }
 
-func (c *Conn) responseStatus(ctx context.Context, status *errors.Status) error {
-	log.Debug("responseStatus : ", status.Error())
-
+func (c *Conn) responseStatus(ctx context.Context, status *errors.Status) (bool, error) {
 	header := &models.Header{
 		Magic:   constant.DefaultMagic,
 		Version: constant.DefaultVersion,
@@ -182,7 +202,8 @@ func (c *Conn) responseStatus(ctx context.Context, status *errors.Status) error 
 	return socket.WriteSocket(ctx, c.bufWriter, header, body)
 }
 
-func (c *Conn) Close() {
+func (c *Conn) Close(err error) {
+	fmt.Println("conn.close() ", c.Name, err)
 	_ = c.rwc.Close()
 
 	putBufReader(c.bufReader)

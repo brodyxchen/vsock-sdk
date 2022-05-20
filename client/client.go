@@ -4,6 +4,8 @@ import (
 	"context"
 	"github.com/brodyxchen/vsock/models"
 	"github.com/brodyxchen/vsock/protocols"
+	"github.com/brodyxchen/vsock/statistics"
+	"github.com/brodyxchen/vsock/statistics/metrics"
 	"google.golang.org/protobuf/proto"
 	"strconv"
 	"sync"
@@ -30,6 +32,30 @@ func (cli *Client) Init(cfg *Config) {
 			connIndex:       0,
 		}
 	}
+
+	connGetHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	connNewHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	tripHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	_ = statistics.ClientReg.Register("tp.connGet", connGetHist)
+	_ = statistics.ClientReg.Register("tp.connNew", connNewHist)
+	_ = statistics.ClientReg.Register("tp.trip", tripHist)
+	cli.transport.connGetHist = connGetHist
+	cli.transport.connNewHist = connNewHist
+	cli.transport.tripHist = tripHist
+
+	sendHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	sendDoneHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	receiveHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	receiveTimeoutHist := metrics.NewHistogram(metrics.NewUniformSample(1028))
+	_ = statistics.ClientReg.Register("pconn.send", sendHist)
+	_ = statistics.ClientReg.Register("pconn.sendDone", sendDoneHist)
+	_ = statistics.ClientReg.Register("pconn.receive", receiveHist)
+	_ = statistics.ClientReg.Register("pconn.recvTimeout", receiveTimeoutHist)
+
+	cli.transport.sendHist = sendHist
+	cli.transport.sendDoneHist = sendDoneHist
+	cli.transport.receiveHist = receiveHist
+	cli.transport.receiveTimeoutHist = receiveTimeoutHist
 }
 
 func (cli *Client) Do(addr models.Addr, path string, req []byte) ([]byte, error) {
@@ -71,6 +97,11 @@ func (cli *Client) send(addr models.Addr, path string, body []byte, deadline tim
 	return rsp.Body, nil
 }
 
+func (cli *Client) DialTest(addr models.Addr) (*PersistConn, error) {
+	conn, err := cli.transport.DialTest(addr)
+	return conn, err
+}
+
 func (cli *Client) SendTest(addr models.Addr, path string, body []byte, deadline time.Time) (int64, []byte, error) {
 	ctx := context.Background()
 	if !deadline.IsZero() {
@@ -92,8 +123,14 @@ func (cli *Client) SendTest(addr models.Addr, path string, body []byte, deadline
 	}
 
 	rsp, err := cli.transport.roundTrip(req)
+	// 系统错误
 	if err != nil {
 		return -1, nil, err
+	}
+
+	// 业务错误
+	if rsp.Err != nil {
+		return -2, nil, rsp.Err
 	}
 
 	return rsp.ConnName, rsp.Body, err
