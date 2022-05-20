@@ -2,11 +2,11 @@ package client
 
 import (
 	"bufio"
-	"github.com/brodyxchen/vsock/errors"
-	"github.com/brodyxchen/vsock/log"
-	"github.com/brodyxchen/vsock/models"
-	"github.com/brodyxchen/vsock/protocols"
-	"github.com/brodyxchen/vsock/socket"
+	"cryptobroker/vsock-sdk/errors"
+	"cryptobroker/vsock-sdk/log"
+	"cryptobroker/vsock-sdk/models"
+	"cryptobroker/vsock-sdk/protocols"
+	"cryptobroker/vsock-sdk/socket"
 	"google.golang.org/protobuf/proto"
 	"io"
 	"net"

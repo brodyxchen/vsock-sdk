@@ -1,7 +1,7 @@
 package client
 
 import (
-	"github.com/brodyxchen/vsock/constant"
+	"cryptobroker/vsock-sdk/constant"
 	"time"
 )
 

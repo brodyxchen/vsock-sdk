@@ -1,7 +1,7 @@
 package client
 
 import (
-	"github.com/brodyxchen/vsock/errors"
+	"cryptobroker/vsock-sdk/errors"
 	"sync"
 	"time"
 )

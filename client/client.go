@@ -2,10 +2,10 @@ package client
 
 import (
 	"context"
-	"github.com/brodyxchen/vsock/models"
-	"github.com/brodyxchen/vsock/protocols"
-	"github.com/brodyxchen/vsock/statistics"
-	"github.com/brodyxchen/vsock/statistics/metrics"
+	"cryptobroker/vsock-sdk/models"
+	"cryptobroker/vsock-sdk/protocols"
+	"cryptobroker/vsock-sdk/statistics"
+	"cryptobroker/vsock-sdk/statistics/metrics"
 	"google.golang.org/protobuf/proto"
 	"strconv"
 	"sync"

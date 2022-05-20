@@ -2,11 +2,11 @@ package client
 
 import (
 	"bufio"
-	"github.com/brodyxchen/vsock/constant"
-	"github.com/brodyxchen/vsock/errors"
-	"github.com/brodyxchen/vsock/log"
-	"github.com/brodyxchen/vsock/models"
-	"github.com/brodyxchen/vsock/statistics/metrics"
+	"cryptobroker/vsock-sdk/constant"
+	"cryptobroker/vsock-sdk/errors"
+	"cryptobroker/vsock-sdk/log"
+	"cryptobroker/vsock-sdk/models"
+	"cryptobroker/vsock-sdk/statistics/metrics"
 	"github.com/mdlayher/vsock"
 	"net"
 	"sync"

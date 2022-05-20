@@ -1,8 +1,8 @@
 package vsock
 
 import (
-	"github.com/brodyxchen/vsock/client"
-	"github.com/brodyxchen/vsock/statistics"
+	"cryptobroker/vsock-sdk/client"
+	"cryptobroker/vsock-sdk/statistics"
 )
 
 func NewClient(cfg *client.Config) *client.Client {

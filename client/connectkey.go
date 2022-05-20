@@ -1,7 +1,7 @@
 package client
 
 import (
-	"github.com/brodyxchen/vsock/models"
+	"cryptobroker/vsock-sdk/models"
 	"strconv"
 )
 
