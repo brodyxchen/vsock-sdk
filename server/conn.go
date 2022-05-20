@@ -11,6 +11,7 @@ import (
 	"github.com/brodyxchen/vsock/protocols"
 	"github.com/brodyxchen/vsock/socket"
 	"google.golang.org/protobuf/proto"
+	"io"
 	"net"
 	"runtime"
 	"time"
@@ -104,20 +105,26 @@ func (c *Conn) serve(ctx context.Context) {
 	}
 
 	waitNext := func() error { // 阻塞等待 下一份数据
-		wait := c.server.idleTimeout()
+		for {
+			wait := c.server.idleTimeout()
 
-		if wait != 0 {
-			_ = c.rwc.SetReadDeadline(time.Now().Add(wait))
-		} else {
+			if wait != 0 {
+				_ = c.rwc.SetReadDeadline(time.Now().Add(wait))
+			} else {
+				_ = c.rwc.SetReadDeadline(time.Time{})
+			}
+
+			_, err := c.bufReader.Peek(1) //models.HeaderSize
+			if err != nil {
+				if err == io.EOF {
+					continue
+				}
+				return errors.New("serve wait peek err : " + err.Error()) // io.EOF 代表对面关闭了???  or i/o timeout
+			}
 			_ = c.rwc.SetReadDeadline(time.Time{})
+			return nil
 		}
 
-		_, err := c.bufReader.Peek(1) //models.HeaderSize
-		if err != nil {
-			return errors.New("serve wait peek err : " + err.Error()) // io.EOF 代表对面关闭了  or i/o timeout
-		}
-		_ = c.rwc.SetReadDeadline(time.Time{})
-		return nil
 	}
 
 	for {

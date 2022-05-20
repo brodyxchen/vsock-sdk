@@ -170,6 +170,9 @@ func (pc *PersistConn) readLoop() {
 	for !pc.isClosed() {
 		_, err = pc.bufReader.Peek(1) // 阻塞
 		if err != nil {
+			if err == io.EOF {
+				continue
+			}
 			closeErr = errors.New("readLoop() peek err => " + err.Error())
 			return
 		}
