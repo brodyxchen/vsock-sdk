@@ -11,14 +11,13 @@ import (
 	"cryptobroker/vsock-sdk/socket"
 	"fmt"
 	"google.golang.org/protobuf/proto"
-	"io"
 	"net"
 	"runtime"
 	"time"
 )
 
 type Conn struct {
-	Name       string
+	Name       int64
 	server     *Server
 	remoteAddr string
 
@@ -114,13 +113,11 @@ func (c *Conn) serve(ctx context.Context) {
 				_ = c.rwc.SetReadDeadline(time.Time{})
 			}
 
-			_, err := c.bufReader.Peek(1) //models.HeaderSize
+			_, err := c.bufReader.Peek(2) //models.HeaderSize
 			if err != nil {
-				if err == io.EOF {
-					continue
-				}
-				return errors.New("serve wait peek err : " + err.Error()) // io.EOF 代表对面关闭了???  or i/o timeout
+				return errors.Wrap(errors.ErrPeekWritingErr, err) // io.EOF 代表对面关闭了???  or i/o timeout
 			}
+
 			_ = c.rwc.SetReadDeadline(time.Time{})
 			return nil
 		}

@@ -8,7 +8,6 @@ import (
 	"cryptobroker/vsock-sdk/statistics/metrics"
 	"github.com/mdlayher/vsock"
 	"net"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +36,10 @@ type Server struct {
 
 func (srv *Server) getConnIndex() int64 {
 	value := atomic.AddInt64(&srv.connIndex, 1)
+	return value
+}
+func (srv *Server) ShowConnIndex() int64 {
+	value := atomic.LoadInt64(&srv.connIndex)
 	return value
 }
 
@@ -132,7 +135,7 @@ func (srv *Server) Serve(l net.Listener) error {
 func (srv *Server) newConn(rwc net.Conn) *Conn {
 	index := srv.getConnIndex()
 	c := &Conn{
-		Name:   "srv-" + strconv.FormatInt(index, 10),
+		Name:   index,
 		server: srv,
 		rwc:    rwc,
 	}
