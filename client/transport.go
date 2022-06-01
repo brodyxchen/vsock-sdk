@@ -225,7 +225,7 @@ func (tp *Transport) roundTrip(req *models.Request) (*models.Response, error) {
 			Header: models.Header{
 				Magic:   constant.DefaultMagic,
 				Version: constant.DefaultVersion,
-				Code:    0, //todo 一些特殊设置: 比如keepAlive
+				Code:    0, // 一些特殊设置: 比如keepAlive
 				Length:  uint16(len(req.Body)),
 			},
 			Body: req.Body,
