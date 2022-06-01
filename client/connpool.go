@@ -41,7 +41,7 @@ func (cp *ConnPool) Get(key connectKey) *PersistConn {
 		tooOld := !idleBegin.IsZero() && pConn.idleAt.Round(0).Before(idleBegin)
 		if tooOld {
 			list = list[:len(list)-1]
-			pConn.close(errors.New("ConnPool.Get() => too old when conn pool get"))
+			pConn.close(errors.ErrConnIdleTimeout)
 			continue
 		}
 
@@ -76,7 +76,7 @@ func (cp *ConnPool) Put(conn *PersistConn) {
 	if conn.idleTimer != nil {
 		conn.idleTimer.Reset(idleTimeout)
 	} else {
-		conn.idleTimer = time.AfterFunc(idleTimeout, conn.closeAndRemove) // 空闲状态才关闭
+		conn.idleTimer = time.AfterFunc(idleTimeout, conn.closeWhenIdleTimeout) // 空闲状态才关闭
 	}
 
 	key := conn.key
@@ -89,7 +89,7 @@ func (cp *ConnPool) Put(conn *PersistConn) {
 		cutPoint := len(list) - cp.maxCapacityPerKey + 1
 		removed := list[:cutPoint]
 		for _, v := range removed {
-			v.close(errors.New("connPool.Put() => removed than capacity"))
+			v.close(errors.ErrOutOfConnectionPool)
 		}
 		list = list[cutPoint:]
 	}

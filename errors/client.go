@@ -21,11 +21,22 @@ import "errors"
 
 var (
 	ErrUnknownServerErr = errors.New("unknown server error")
-	ErrReadTimeout      = errors.New("read response timeout")
-	ErrConnEarlyClose   = errors.New("conn early close")
 
-	ErrCtxDone      = errors.New("ctx done")
-	ErrCtxRoundDone = errors.New("ctx round done")
-	ErrCtxReadDone  = errors.New("ctx read done")
-	ErrCtxWriteDone = errors.New("ctx write done")
+	ErrCtxDone      = errors.New("context deadline done")
+	ErrCtxReadDone  = errors.New("context read done")
+	ErrCtxWriteDone = errors.New("context write done")
+
+	ErrConnIdleTimeout     = errors.New("conn idle timeout")
+	ErrOutOfConnectionPool = errors.New("out of connection pool")
+
+	ErrSendErr    = errors.New("client send data err")
+	ErrReceiveErr = errors.New("client receive data err")
+	ErrClosed     = errors.New("client conn is closed")
+
+	ErrWriteSocketErr = errors.New("write socket err")
+	ErrReadSocketErr  = errors.New("read socket err")
+
+	ErrPeekWritingErr = errors.New("peek waiting data err")
+
+	ErrTransportTripClose = errors.New("transport round trip close")
 )

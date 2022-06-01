@@ -61,19 +61,25 @@ func (pc *PersistConn) roundTrip(req *models.Request) (*models.Response, error) 
 		case err := <-sendReply:
 			pc.transport.sendDoneHist.Update(time.Since(sendNow).Milliseconds())
 			if err != nil {
-				return nil, err
+				return nil, errors.Wrap(errors.ErrSendErr, err)
 			}
 		case rpy := <-receiveReply:
 			pc.transport.receiveHist.Update(time.Since(sendNow).Milliseconds())
-			return rpy.Rsp, rpy.Err
+			if rpy.Err != nil {
+				return nil, errors.Wrap(errors.ErrReceiveErr, rpy.Err)
+			}
+			return rpy.Rsp, nil
 
 		// 异常处理
 		case <-pc.closedCh: // 外部关闭
 			pc.transport.receiveTimeoutHist.Update(time.Since(sendNow).Milliseconds())
-			return nil, errors.ErrConnEarlyClose
+			if pc.closed != nil {
+				return nil, pc.closed
+			}
+			return nil, errors.ErrClosed
 		case <-req.Ctx.Done(): // ctx结束
 			pc.transport.receiveTimeoutHist.Update(time.Since(sendNow).Milliseconds())
-			return nil, errors.ErrCtxRoundDone
+			return nil, errors.ErrCtxDone
 		}
 	}
 }
@@ -88,11 +94,11 @@ func (pc *PersistConn) Write(p []byte) (n int, err error) {
 	return
 }
 
-func (pc *PersistConn) closeAndRemove() {
+func (pc *PersistConn) closeWhenIdleTimeout() {
 	if !pc.transport.removeConn(pc) {
 		return
 	}
-	pc.close(errors.New("pc.closeAndRemove() => idle timer close"))
+	pc.close(errors.ErrConnIdleTimeout)
 }
 
 func (pc *PersistConn) writeLoop() {
@@ -107,7 +113,7 @@ func (pc *PersistConn) writeLoop() {
 				writeReq.Reply <- err
 
 				if broken {
-					pc.close(err)
+					pc.close(errors.Wrap(errors.ErrWriteSocketErr, err))
 					return
 				}
 			} else {
@@ -118,7 +124,7 @@ func (pc *PersistConn) writeLoop() {
 }
 
 func (pc *PersistConn) readLoop() {
-	closeErr := errors.New("pc.readLoop() => default exiting")
+	closeErr := errors.ErrClosed
 
 	defer func() {
 		pc.close(closeErr)
@@ -168,12 +174,12 @@ func (pc *PersistConn) readLoop() {
 		rsp       *models.Response
 	)
 	for !pc.isClosed() {
-		_, err = pc.bufReader.Peek(1) // 阻塞
+		_, err = pc.bufReader.Peek(2) // 阻塞
 		if err != nil {
-			if err == io.EOF {
-				continue
-			}
-			closeErr = errors.New("readLoop() peek err => " + err.Error())
+			//if err == io.EOF {
+			//	continue
+			//}
+			closeErr = errors.Wrap(errors.ErrPeekWritingErr, err)
 			return
 		}
 
@@ -195,10 +201,12 @@ func (pc *PersistConn) readLoop() {
 		}
 
 		if err != nil && broken {
-			closeErr = err
+			closeErr = errors.Wrap(errors.ErrReadSocketErr, err)
 			return
 		}
 	}
+
+	closeErr = errors.ErrClosed
 }
 
 func (pc *PersistConn) isClosed() bool {

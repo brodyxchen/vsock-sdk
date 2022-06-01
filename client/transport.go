@@ -197,7 +197,13 @@ func (tp *Transport) roundTrip(req *models.Request) (*models.Response, error) {
 		}
 
 		// 关闭conn
-		closeConn(conn, errors.New("tp.roundTrip() => "+err.Error()))
+		if err == nil {
+			if conn.closed == nil {
+				closeConn(conn, errors.ErrTransportTripClose)
+			}
+		} else {
+			closeConn(conn, err)
+		}
 		conn = nil
 	}()
 
@@ -240,7 +246,7 @@ func (tp *Transport) roundTrip(req *models.Request) (*models.Response, error) {
 
 		// 准备重试
 		retryCount++
-		closeConn(conn, errors.New("round trip retry with "+err.Error()))
+		closeConn(conn, err)
 		conn = nil
 	}
 }
