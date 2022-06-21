@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/vsock.iml" filepath="$PROJECT_DIR$/.idea/vsock.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/vsock-sdk.iml" filepath="$PROJECT_DIR$/.idea/vsock-sdk.iml" />
     </modules>
   </component>
 </project>

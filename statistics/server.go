@@ -1,7 +1,7 @@
 package statistics
 
 import (
-	"cryptobroker/vsock-sdk/statistics/metrics"
+	"github.com/brodyxchen/vsock-sdk/statistics/metrics"
 	"time"
 )
 

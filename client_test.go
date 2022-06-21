@@ -1,9 +1,9 @@
 package vsock
 
 import (
-	"cryptobroker/vsock-sdk/client"
-	"cryptobroker/vsock-sdk/models"
 	"fmt"
+	"github.com/brodyxchen/vsock-sdk/client"
+	"github.com/brodyxchen/vsock-sdk/models"
 	"sync"
 	"testing"
 	"time"

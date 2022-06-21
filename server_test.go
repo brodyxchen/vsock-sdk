@@ -1,7 +1,7 @@
 package vsock
 
 import (
-	"cryptobroker/vsock-sdk/models"
+	"github.com/brodyxchen/vsock-sdk/models"
 	"time"
 )
 
