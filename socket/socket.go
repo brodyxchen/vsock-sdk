@@ -3,10 +3,10 @@ package socket
 import (
 	"bufio"
 	"context"
-	"cryptobroker/vsock-sdk/constant"
-	"cryptobroker/vsock-sdk/errors"
-	"cryptobroker/vsock-sdk/models"
 	"encoding/binary"
+	"github.com/brodyxchen/vsock-sdk/constant"
+	"github.com/brodyxchen/vsock-sdk/errors"
+	"github.com/brodyxchen/vsock-sdk/models"
 	"io"
 	"math"
 )

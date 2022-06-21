@@ -1,7 +1,7 @@
 syntax = "proto3";
 package accountpb;
 
-option go_package = "cryptobroker/vsock-sdk/protocols";
+option go_package = "github.com/brodyxchen/vsock-sdk/protocols";
 
 message Request {
   string path = 1;
