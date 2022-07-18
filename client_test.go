@@ -1,4 +1,4 @@
-package vsock
+package vsock_sdk
 
 import (
 	"fmt"

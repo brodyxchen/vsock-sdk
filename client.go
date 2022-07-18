@@ -1,4 +1,4 @@
-package vsock
+package vsock_sdk
 
 import (
 	"github.com/brodyxchen/vsock-sdk/client"
