@@ -9,6 +9,8 @@ var (
 	clientCloseChan chan struct{}
 
 	ClientReg metrics.Registry
+
+	EnableClient = false
 )
 
 func InitClient() {
@@ -18,7 +20,9 @@ func InitClient() {
 }
 
 func RunClient() {
-	metrics.LogRoutine("Client", ClientReg, 10*time.Second, clientCloseChan)
+	if EnableClient {
+		metrics.LogRoutine("Client", ClientReg, 10*time.Second, clientCloseChan)
+	}
 }
 
 func CloseClient() {

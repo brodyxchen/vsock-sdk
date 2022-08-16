@@ -9,6 +9,8 @@ var (
 	serverCloseChan chan struct{}
 
 	ServerReg metrics.Registry
+
+	EnableServer = false
 )
 
 func InitServer() {
@@ -18,7 +20,9 @@ func InitServer() {
 }
 
 func RunServer() {
-	metrics.LogRoutine("Server", ServerReg, 10*time.Second, serverCloseChan)
+	if EnableServer {
+		metrics.LogRoutine("Server", ServerReg, 10*time.Second, serverCloseChan)
+	}
 }
 
 func CloseServer() {
