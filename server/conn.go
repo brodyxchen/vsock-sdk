@@ -90,6 +90,15 @@ func (c *Conn) serve(ctx context.Context) {
 			buf := make([]byte, size)
 			buf = buf[:runtime.Stack(buf, false)]
 			log.Errorf("http: panic serving %v: %v\n%s", c.remoteAddr, err, buf)
+
+			writeNow := time.Now()
+			panicErr := errors.NewStatus(500, fmt.Sprintf("panic serving : %v\n{%s}", err, string(buf)))
+			broken, err := c.responseStatus(ctx, panicErr)
+			c.server.writeHist.Update(time.Since(writeNow).Milliseconds())
+			if err != nil && broken {
+				closeErr = err
+				return
+			}
 		}
 	}()
 

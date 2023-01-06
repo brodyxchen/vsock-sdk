@@ -7,6 +7,13 @@ type Status struct {
 	message string
 }
 
+func NewStatus(code uint16, msg string) *Status {
+	return &Status{
+		code:    code,
+		message: msg,
+	}
+}
+
 func (st *Status) Error() string {
 	return st.message
 }
